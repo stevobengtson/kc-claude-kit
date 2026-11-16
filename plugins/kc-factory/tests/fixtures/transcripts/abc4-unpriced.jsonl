@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Intake for .factory/jobs/ABC-4/"}}
+{"type":"assistant","message":{"model":"claude-mystery-x","usage":{"input_tokens":1000,"output_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
