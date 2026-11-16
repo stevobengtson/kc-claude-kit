@@ -89,6 +89,44 @@ refusal "refuses an unknown job" "plan: ABC-9 has no job" ':' ABC-9
 refusal "refuses an intake with no criteria" "plan: ABC-1 intake has no acceptance criteria" \
   'grep -Ev "^[12]\. " "$home/jobs/ABC-1/intake.md" > "$work/i" && mv "$work/i" "$home/jobs/ABC-1/intake.md"' ABC-1
 
+refusal "refuses an invalid job.json" "plan: ABC-1 job.json is not valid JSON" \
+  'echo "{nope" > "$home/jobs/ABC-1/job.json"' ABC-1
+refusal "refuses a key given twice" "plan: ABC-1 given twice" ':' ABC-1 ABC-2 ABC-1
+
+# injected <label> <setup>: the plan still validates and has exactly the expected two units.
+injected() {
+  local label=$1 setup=$2 st=0 units
+  fresh_home "$home"
+  rm -rf "$run"; mkdir -p "$run"
+  eval "$setup"
+  FACTORY_HOME="$home" bash "$script" "$run" ABC-1 ABC-2 >/dev/null 2>&1 || st=$?
+  units=$(grep -c '^### U' "$run/plan.md" 2>/dev/null || true)
+  if [ "$st" = 0 ] && [ "$units" = 2 ] && bash "$validator" "$run/plan.md" >/dev/null 2>&1; then
+    pass "$label"
+  else
+    fail "$label" "status $st, unit headings $units"
+  fi
+}
+set_scope() { # <first scope line>
+  awk -v first="$1" '/^## Scope/ { print; print first; skip = 1; next } skip && NF { skip = 0 } { print }' \
+    "$home/jobs/ABC-1/intake.md" > "$work/i" && mv "$work/i" "$home/jobs/ABC-1/intake.md"
+}
+injected "scope line shaped like a unit heading stays scope" 'set_scope "### U2: x"'
+injected "scope line shaped like a Covers line stays scope" 'set_scope "- Covers: AC9"'
+injected "scope line shaped like a Routing line stays scope" 'set_scope "- Routing: workers=bogus"'
+injected "scope line shaped like a title stays scope" 'set_scope "# Other"'
+injected "newline in a job title stays on one line" \
+  'jq ".title=\"first\\n### U9: injected\"" "$home/jobs/ABC-1/job.json" > "$work/j" && mv "$work/j" "$home/jobs/ABC-1/job.json"'
+# A newline in a routing field is flattened, so it is a bad model name the self-check refuses.
+refusal "newline in a routing field is flattened and refused" "plan: generated plan is invalid:
+plan: U1 routing workers must be haiku, sonnet, opus, best or a claude-* model id" \
+  'jq ".workers=\"sonnet\\n### U9: injected\"" "$home/jobs/ABC-1/routing.json" > "$work/j" && mv "$work/j" "$home/jobs/ABC-1/routing.json"' ABC-1
+
+# A routing value the validator rejects is caught by the self-check and writes nothing.
+refusal "refuses a plan the validator rejects" "plan: generated plan is invalid:
+plan: U1 routing workers must be haiku, sonnet, opus, best or a claude-* model id" \
+  'jq ".workers=\"gpt\"" "$home/jobs/ABC-1/routing.json" > "$work/j" && mv "$work/j" "$home/jobs/ABC-1/routing.json"' ABC-1
+
 status=0
 bash "$script" "$run" >/dev/null 2>&1 || status=$?
 if [ "$status" = 2 ]; then pass "usage error exits 2"; else fail "usage error exits 2" "status $status"; fi

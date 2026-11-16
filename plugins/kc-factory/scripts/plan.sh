@@ -36,6 +36,13 @@ section() {
     on { sub(/\r$/, ""); print }' "$1"
 }
 
+# flat <text>: the text on one line, so it cannot start a new plan line.
+flat() { printf '%s' "$1" | tr '\r\n' '  '; }
+
+for key in "$@"; do
+  [ "$(printf '%s\n' "$@" | grep -cxF -- "$key")" = 1 ] || refuse "$key given twice"
+done
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -52,16 +59,17 @@ for key in "$@"; do
   n=$((n + 1))
   job_dir="$home/jobs/$key"
   [ -f "$job_dir/job.json" ] || refuse "$key has no job"
+  jq -e . "$job_dir/job.json" >/dev/null 2>&1 || refuse "$key job.json is not valid JSON"
   stage=$(jq -r '.stage' "$job_dir/job.json")
   [ "$stage" = queued ] || refuse "$key is in $stage, not queued"
   [ -f "$job_dir/intake.md" ] || refuse "$key has no intake.md"
   [ -f "$job_dir/routing.json" ] || refuse "$key has no routing.json"
 
-  title=$(jq -r --arg k "$key" '.title // $k' "$job_dir/job.json")
-  routing=$(jq -r '"- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)"' "$job_dir/routing.json") \
+  title=$(jq -r --arg k "$key" '(.title // $k) | tostring | gsub("[\r\n]+"; " ")' "$job_dir/job.json")
+  routing=$(jq -r '"- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)" | gsub("[\r\n]+"; " ")' "$job_dir/routing.json") \
     || refuse "$key routing.json is not valid routing"
-  scope=$(section "$job_dir/intake.md" "Scope" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); printf "%s%s", (n++ ? " " : ""), $0 }')
-  url=$(section "$job_dir/intake.md" "Ticket" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }')
+  scope=$(flat "$(section "$job_dir/intake.md" "Scope" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); printf "%s%s", (n++ ? " " : ""), $0 }')")
+  url=$(section "$job_dir/intake.md" "Ticket" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\r')
   ac_lines=$(section "$job_dir/intake.md" "Acceptance criteria" | sed -n 's/^[0-9][0-9]*\.[ \t][ \t]*//p')
   [ -n "$ac_lines" ] || refuse "$key intake has no acceptance criteria"
 
@@ -71,7 +79,7 @@ for key in "$@"; do
   while IFS= read -r criterion; do
     count=$((count + 1))
     ac=$((next_ac + count - 1))
-    criteria="${criteria}${ac}. ${criterion}"$'\n'
+    criteria="${criteria}${ac}. $(flat "$criterion")"$'\n'
     covers="${covers:+$covers, }AC${ac}"
     local_map=$(jq -c --arg ac "AC$ac" --argjson i "$count" '. + {($ac): $i}' <<<"$local_map")
   done <<<"$ac_lines"
@@ -82,10 +90,10 @@ for key in "$@"; do
   goal="${goal}- ${key}: ${title}"$'\n'
   unit_title=$key
   [ "$title" = "$key" ] || unit_title="$key $title"
-  units="${units}### ${unit}: ${unit_title}"$'\n'"- Depends on: none"$'\n'"- Covers: ${covers}"$'\n'"${routing}"$'\n'"${scope}"$'\n\n'
+  units="${units}### ${unit}: ${unit_title}"$'\n'"- Depends on: none"$'\n'"- Covers: ${covers}"$'\n'"${routing}"$'\n'"- Scope: ${scope}"$'\n\n'
   section "$job_dir/intake.md" "Out of scope" | sed -n 's/^[ \t]*-[ \t][ \t]*//p' > "$tmp/oos"
   while IFS= read -r item; do
-    oos="${oos}- ${key}: ${item}"$'\n'
+    oos="${oos}- ${key}: $(flat "$item")"$'\n'
   done < "$tmp/oos"
   notes="${notes}### ${key}"$'\n'"Ticket: ${url}"$'\n'"Accepted scope: ${scope}"$'\n\n'
 done
@@ -112,6 +120,16 @@ title_keys=$(printf '%s, ' "$@")
   printf '%s' "$notes"
 } > "$tmp/plan.md"
 printf '%s\n' "$map" > "$tmp/map.json"
+
+# Self-check with the autopilot validator when this install has it beside it.
+validator="$(dirname "$0")/../../kc-autopilot/scripts/validate-plan.sh"
+if [ -f "$validator" ]; then
+  if ! problems=$(bash "$validator" "$tmp/plan.md" 2>&1 >/dev/null); then
+    echo "plan: generated plan is invalid:" >&2
+    printf '%s\n' "$problems" >&2
+    exit 1
+  fi
+fi
 
 mkdir -p "$run_dir"
 mv "$tmp/plan.md" "$run_dir/plan.md"
