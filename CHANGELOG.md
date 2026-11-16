@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed (a unit's objection no longer stops the rest)
+
+- `kc-autopilot` 0.3.2: a plan unit may carry an optional `- Routing: workers=<model>; personas=<min>-<max>; security=<workers|staff>` line; `validate-plan.sh` parses it, `validate-units.sh` checks each unit's persona count against its own range, and `deliver.js` routes that unit's worker model, persona minimum and security-lens model. `kc-run` drops only the units a design objection concerns (new `scripts/drop-units.sh` prints the plan without them and without criteria only they cover, and records them in `dropped.json`), carries on with the rest, and reports each dropped unit as `blocked:plan-conflict`; an objection spanning every unit still stops the run. `kc-run` also takes `--config <path>` (default `.claude/autopilot.json`) for a per-run config copy. The class: one bad part rejecting the whole batch; other cases are a bulk import that aborts on one bad row, a CI matrix that cancels every job when one fails, a migration that rolls back all tables for one. Held by `plugins/kc-autopilot/tests/drop-units.test.sh` (kc-run's partial-drop text), plus the validate-plan, validate-units and deliver tests for the routing line.
+
 ### Changed
 
 - `kc-conventions` 2.4.3: a guard holds only where every way in passes it. `kc-look-back`'s layer list now says a guard counts only when the default branch requires its CI check before merge and a local hook covers commits made straight to that branch. The class: a check that some write path skips; other cases are a size budget in CI on a branch that merges with red checks, a clone that commits to the main branch and never runs CI, a pre-commit hook that a web edit never triggers.
