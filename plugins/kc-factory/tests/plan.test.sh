@@ -127,6 +127,28 @@ refusal "refuses a plan the validator rejects" "plan: generated plan is invalid:
 plan: U1 routing workers must be haiku, sonnet, opus, best or a claude-* model id" \
   'jq ".workers=\"gpt\"" "$home/jobs/ABC-1/routing.json" > "$work/j" && mv "$work/j" "$home/jobs/ABC-1/routing.json"' ABC-1
 
+# KC_AUTOPILOT_ROOT names the autopilot install whose validator the self-check runs
+# (installed plugins sit in versioned cache dirs, not side by side).
+mkdir -p "$work/fake-autopilot/scripts"
+printf '#!/usr/bin/env bash\necho "plan: fake validator ran" >&2\nexit 1\n' > "$work/fake-autopilot/scripts/validate-plan.sh"
+fresh_home "$home"
+rm -rf "$run"; mkdir -p "$run"
+status=0
+err=$(KC_AUTOPILOT_ROOT="$work/fake-autopilot" FACTORY_HOME="$home" bash "$script" "$run" ABC-1 2>&1 >/dev/null) || status=$?
+if [ "$status" = 1 ] && [ "$err" = "plan: generated plan is invalid:
+plan: fake validator ran" ] && [ ! -e "$run/plan.md" ]; then
+  pass "KC_AUTOPILOT_ROOT picks the validator the self-check runs"
+else
+  fail "KC_AUTOPILOT_ROOT picks the validator the self-check runs" "status $status, stderr: $err"
+fi
+status=0
+err=$(KC_AUTOPILOT_ROOT="$work/no-such-autopilot" FACTORY_HOME="$home" bash "$script" "$run" ABC-1 2>&1 >/dev/null) || status=$?
+if [ "$status" = 1 ] && [ "$err" = "plan: KC_AUTOPILOT_ROOT has no scripts/validate-plan.sh: $work/no-such-autopilot" ]; then
+  pass "a KC_AUTOPILOT_ROOT without the validator is refused"
+else
+  fail "a KC_AUTOPILOT_ROOT without the validator is refused" "status $status, stderr: $err"
+fi
+
 status=0
 bash "$script" "$run" >/dev/null 2>&1 || status=$?
 if [ "$status" = 2 ]; then pass "usage error exits 2"; else fail "usage error exits 2" "status $status"; fi

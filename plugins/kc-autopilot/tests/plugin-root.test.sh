@@ -48,5 +48,15 @@ jq -n --arg ap "$tmp/cache2/mkt/kc-autopilot/0.1.0" --arg cr "$tmp/cache2/mkt/kc
 CONFIG_DIR=$tmp/config expect "install record: this marketplace's user-scope entry" 0 "$tmp/cache2/mkt/kc-gates/2.0.0" "$tmp/cache2/mkt/kc-autopilot/0.1.0"
 CONFIG_DIR=$tmp/config expect "install record without kc-autopilot: falls back to the layout" 0 "$tmp/side/kc-gates" "$tmp/side/kc-autopilot"
 
+# Any plugin can ask: the marketplace is the one whose entry installed the caller's root.
+plugin "$tmp/cache2/mkt/kc-factory/0.1.0" kc-factory
+plugin "$tmp/cache2/mkt/kc-autopilot/0.9.0" kc-autopilot
+jq --arg f "$tmp/cache2/mkt/kc-factory/0.1.0" '.plugins["kc-factory@mkt"] = [{scope: "user", installPath: $f}]' \
+  "$tmp/config/plugins/installed_plugins.json" > "$tmp/record" && mv "$tmp/record" "$tmp/config/plugins/installed_plugins.json"
+status=0
+out=$(CLAUDE_CONFIG_DIR=$tmp/config bash "$script" "$tmp/cache2/mkt/kc-factory/0.1.0" kc-autopilot 2>/dev/null) || status=$?
+if [ "$status" = 0 ] && [ "$out" = "$tmp/cache2/mkt/kc-autopilot/0.1.0" ]; then pass "install record: another plugin finds kc-autopilot"
+else fail "install record: another plugin finds kc-autopilot" "expected 0 '$tmp/cache2/mkt/kc-autopilot/0.1.0', got $status '$out'"; fi
+
 echo "plugin-root: $passes passed, $failures failed"
 [ "$failures" = 0 ]

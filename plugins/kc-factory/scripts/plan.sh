@@ -6,6 +6,8 @@
 # Nothing is written unless every job is planned.
 #
 # Usage: plan.sh <run-dir> <KEY>...
+# Env: KC_AUTOPILOT_ROOT, the kc-autopilot root whose validate-plan.sh checks
+# the generated plan (default: kc-autopilot beside this plugin, if present).
 # Exit: 0 written; 1 refused ("plan: <problem>" on stderr); 2 jq missing or a
 # usage error. Jobs live at $FACTORY_HOME/jobs/<KEY>/ (default <repo>/.factory).
 set -euo pipefail
@@ -121,8 +123,15 @@ title_keys=$(printf '%s, ' "$@")
 } > "$tmp/plan.md"
 printf '%s\n' "$map" > "$tmp/map.json"
 
-# Self-check with the autopilot validator when this install has it beside it.
-validator="$(dirname "$0")/../../kc-autopilot/scripts/validate-plan.sh"
+# Self-check with the autopilot validator: KC_AUTOPILOT_ROOT's when set (an
+# installed plugin sits in a versioned cache dir, so the skill passes the root
+# plugin-root.sh found), else the one beside this plugin when it is there.
+if [ -n "${KC_AUTOPILOT_ROOT:-}" ]; then
+  validator="$KC_AUTOPILOT_ROOT/scripts/validate-plan.sh"
+  [ -f "$validator" ] || refuse "KC_AUTOPILOT_ROOT has no scripts/validate-plan.sh: $KC_AUTOPILOT_ROOT"
+else
+  validator="$(dirname "$0")/../../kc-autopilot/scripts/validate-plan.sh"
+fi
 if [ -f "$validator" ]; then
   if ! problems=$(bash "$validator" "$tmp/plan.md" 2>&1 >/dev/null); then
     echo "plan: generated plan is invalid:" >&2
