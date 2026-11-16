@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Tests scripts/job.sh: create, legal and illegal stage moves, field
+# whitelist, history, and the index.json the dashboard reads.
+set -euo pipefail
+
+tests_dir=$(cd "$(dirname "$0")" && pwd)
+plugin_dir=$(dirname "$tests_dir")
+script="$plugin_dir/scripts/job.sh"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+passes=0
+failures=0
+
+pass() { echo "ok   $1"; passes=$((passes + 1)); }
+fail() { echo "FAIL $1"; echo "     $2"; failures=$((failures + 1)); }
+
+bash "$plugin_dir/scripts/read-config.sh" "$tests_dir/fixtures/config/minimal.json" > "$work/config.json"
+
+home=""
+fresh_home() { home="$work/home-$1"; rm -rf "$home"; mkdir -p "$home"; }
+job() { FACTORY_HOME="$home" FACTORY_NOW=2026-01-02T03:04:05Z bash "$script" "$@"; }
+stage_of() { job show "$1" | jq -r '.stage'; }
+
+# expect_refusal <label> <expected stderr line> <job.sh args...>
+expect_refusal() {
+  local label=$1 message=$2 status=0 err
+  shift 2
+  err=$(job "$@" 2>&1 >/dev/null) || status=$?
+  if [ "$status" = 1 ] && [ "$err" = "$message" ]; then
+    pass "$label"
+  else
+    fail "$label" "status $status, stderr: $err"
+  fi
+}
+
+fresh_home create
+dir=$(job create ABC-1 "$work/config.json")
+if [ "$dir" = "$home/jobs/ABC-1" ] && [ -f "$dir/job.json" ]; then
+  pass "create: prints the job dir"
+else
+  fail "create: prints the job dir" "got $dir"
+fi
+shown=$(job show ABC-1)
+if [ "$(jq -c '[.key, .stage, .created_at, .updated_at, .history]' <<<"$shown")" = '["ABC-1","intake","2026-01-02T03:04:05Z","2026-01-02T03:04:05Z",[{"stage":"intake","at":"2026-01-02T03:04:05Z"}]]' ]; then
+  pass "create: show gives stage intake, timestamps and history"
+else
+  fail "create: show gives stage intake, timestamps and history" "$shown"
+fi
+
+# Every legal move in the table.
+legal_move() {
+  local from=$1 to=$2 path=$3 key=$4 step
+  fresh_home "legal-$key"
+  job create "$key" "$work/config.json" >/dev/null
+  for step in $path; do job advance "$key" "$step" >/dev/null; done
+  if [ "$(stage_of "$key")" != "$from" ]; then
+    fail "legal: $from -> $to" "setup reached $(stage_of "$key"), not $from"
+    return
+  fi
+  if job advance "$key" "$to" >/dev/null 2>&1 && [ "$(stage_of "$key")" = "$to" ]; then
+    pass "legal: $from -> $to"
+  else
+    fail "legal: $from -> $to" "refused or wrong stage"
+  fi
+}
+legal_move intake needs-info "" ABC-1
+legal_move intake rejected "" ABC-2
+legal_move intake queued "" ABC-3
+legal_move needs-info intake "needs-info" ABC-4
+legal_move needs-info rejected "needs-info" ABC-5
+legal_move queued delivering "queued" ABC-6
+legal_move queued blocked "queued" ABC-7
+legal_move delivering ready "queued delivering" ABC-8
+legal_move delivering blocked "queued delivering" ABC-9
+legal_move blocked queued "queued blocked" ABC-10
+legal_move blocked rejected "queued blocked" ABC-11
+
+fresh_home illegal
+job create ABC-1 "$work/config.json" >/dev/null
+for step in queued delivering ready; do job advance ABC-1 "$step" >/dev/null; done
+expect_refusal "illegal move is refused" "job: ABC-1 cannot move from ready to intake" advance ABC-1 intake
+expect_refusal "unknown stage is refused" "job: ABC-1 cannot move from ready to done" advance ABC-1 "done"
+if [ "$(stage_of ABC-1)" = ready ]; then pass "illegal move leaves the stage alone"; else fail "illegal move leaves the stage alone" "$(stage_of ABC-1)"; fi
+
+fresh_home keys
+expect_refusal "create refuses a key outside project_keys" "job: ABC1 is not a ticket key in project_keys" create ABC1 "$work/config.json"
+expect_refusal "create refuses another project's key" "job: XYZ-1 is not a ticket key in project_keys" create XYZ-1 "$work/config.json"
+
+fresh_home running
+job create ABC-1 "$work/config.json" >/dev/null
+job advance ABC-1 queued >/dev/null
+expect_refusal "create refuses a queued job" "job: ABC-1 is already queued" create ABC-1 "$work/config.json"
+job advance ABC-1 delivering >/dev/null
+expect_refusal "create refuses a key whose job is running" "job: ABC-1 is already delivering" create ABC-1 "$work/config.json"
+
+fresh_home resume
+job create ABC-1 "$work/config.json" >/dev/null
+job advance ABC-1 queued >/dev/null
+job advance ABC-1 blocked >/dev/null
+resumed=$(job create ABC-1 "$work/config.json")
+if [ "$resumed" = "$home/jobs/ABC-1" ] && [ "$(stage_of ABC-1)" = blocked ]; then
+  pass "create on a blocked job returns its dir"
+else
+  fail "create on a blocked job returns its dir" "got $resumed, stage $(stage_of ABC-1)"
+fi
+job create ABC-2 "$work/config.json" >/dev/null
+job advance ABC-2 needs-info >/dev/null
+if [ "$(job create ABC-2 "$work/config.json")" = "$home/jobs/ABC-2" ]; then
+  pass "create on a needs-info job returns its dir"
+else
+  fail "create on a needs-info job returns its dir" "wrong dir"
+fi
+
+fresh_home set
+job create ABC-1 "$work/config.json" >/dev/null
+job set ABC-1 risk '"high"'
+job set ABC-1 surfaces '["security","ui"]'
+job set ABC-1 cost_usd 1.5
+job set ABC-1 title '"Fix checkout total"'
+if [ "$(job show ABC-1 | jq -c '[.risk, .surfaces, .cost_usd, .title]')" = '["high",["security","ui"],1.5,"Fix checkout total"]' ]; then
+  pass "set: stores json values on whitelisted fields"
+else
+  fail "set: stores json values on whitelisted fields" "$(job show ABC-1)"
+fi
+expect_refusal "set refuses an unknown field" "job: stage is not a settable field" set ABC-1 stage '"ready"'
+expect_refusal "set refuses a non-JSON value" "job: value for risk is not valid JSON" set ABC-1 risk high
+expect_refusal "set refuses a missing job" "job: ABC-9 has no job" set ABC-9 risk '"low"'
+expect_refusal "show refuses a missing job" "job: ABC-9 has no job" show ABC-9
+
+fresh_home later
+job create ABC-1 "$work/config.json" >/dev/null
+later=$(FACTORY_HOME="$home" FACTORY_NOW=2026-02-03T04:05:06Z bash "$script" set ABC-1 reason '"waiting"' && FACTORY_HOME="$home" bash "$script" show ABC-1)
+if [ "$(jq -c '[.created_at, .updated_at, (.history | length)]' <<<"$later")" = '["2026-01-02T03:04:05Z","2026-02-03T04:05:06Z",1]' ]; then
+  pass "set stamps updated_at, keeps created_at and history"
+else
+  fail "set stamps updated_at, keeps created_at and history" "$later"
+fi
+
+fresh_home history
+job create ABC-1 "$work/config.json" >/dev/null
+job advance ABC-1 queued >/dev/null
+job advance ABC-1 delivering >/dev/null
+if [ "$(job show ABC-1 | jq -c '[.history[].stage]')" = '["intake","queued","delivering"]' ]; then
+  pass "history grows by one per advance"
+else
+  fail "history grows by one per advance" "$(job show ABC-1 | jq -c .history)"
+fi
+
+fresh_home index
+job create ABC-2 "$work/config.json" >/dev/null
+job create ABC-1 "$work/config.json" >/dev/null
+job advance ABC-2 queued >/dev/null
+if [ "$(jq -c '[.[] | [.key, .stage]]' "$home/jobs/index.json")" = '[["ABC-1","intake"],["ABC-2","queued"]]' ]; then
+  pass "index.json lists every job sorted by key, current after writes"
+else
+  fail "index.json lists every job sorted by key, current after writes" "$(cat "$home/jobs/index.json")"
+fi
+listed=$(job list)
+if [ "$listed" = "$(printf 'ABC-1\tintake\t\nABC-2\tqueued\t')" ]; then
+  pass "list: KEY, stage and title per line"
+else
+  fail "list: KEY, stage and title per line" "$listed"
+fi
+job set ABC-1 title '"Fix checkout total"'
+if [ "$(job list | head -1)" = "$(printf 'ABC-1\tintake\tFix checkout total')" ]; then
+  pass "list: shows a set title"
+else
+  fail "list: shows a set title" "$(job list)"
+fi
+if [ -z "$(find "$home/jobs" -name '*.tmp*')" ]; then
+  pass "no temp files left behind"
+else
+  fail "no temp files left behind" "$(find "$home/jobs" -name '*.tmp*')"
+fi
+
+echo
+echo "$passes passed, $failures failed"
+[ "$failures" = 0 ]
