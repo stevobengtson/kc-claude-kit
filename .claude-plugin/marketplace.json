@@ -42,6 +42,11 @@
       "name": "kc-autopilot",
       "source": "./plugins/kc-autopilot",
       "description": "Plan in, PRs out: engineer, reviewer and persona-QA agents loop on each unit of an approved plan until it is clean"
+    },
+    {
+      "name": "kc-factory",
+      "source": "./plugins/kc-factory",
+      "description": "Tracker tickets in, ready PRs out: intake, risk-based routing and an autopilot run per ticket, with a dashboard beside the chat"
     }
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "tracker": {
+    "kind": "jira",
+    "site": "shop.atlassian.net",
+    "project_keys": ["ABC", "WEB2"],
+    "statuses": { "in_progress": "Doing", "in_review": "Review" },
+    "comment_on": ["needs-info", "ready"]
+  },
+  "concurrency": 5,
+  "intake": { "model": "opus" },
+  "routing": {
+    "low": { "workers": "haiku" },
+    "high": { "workers": "claude-opus-4-1", "personas": { "min": 5, "max": 6 }, "security": "workers" },
+    "surfaces": { "payments": { "security": "staff", "workers": "best" } }
+  },
+  "prices_usd_per_mtok": { "sonnet": { "input": 3, "output": 15 } }
+}
