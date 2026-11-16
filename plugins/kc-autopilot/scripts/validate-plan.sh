@@ -34,10 +34,18 @@ records=$(awk '
   section == "Work units" && unit != "" && /^- Covers:/ {
     line = $0; sub(/^- Covers:[ \t]*/, "", line); print "covers\t" unit "\t" trim(line); next
   }
+  section == "Work units" && unit != "" && /^- Routing:/ {
+    line = $0; sub(/^- Routing:[ \t]*/, "", line); print "routing\t" unit "\t" trim(line); next
+  }
   section == "Work units" && unit != "" && NF { print "scope\t" unit "\t" trim($0); next }
 ' "$plan")
 
 parsed=$(printf '%s\n' "$records" | jq -R -s '
+  def trim: gsub("^\\s+|\\s+$"; "");
+  # "k=v; k=v" -> {k: v}; a personas range becomes {min, max} when well formed.
+  def routing: split(";") | map(trim | select(. != "") | capture("^(?<k>[^=]*)=(?<v>.*)$") // {k: ., v: ""})
+    | map({key: (.k | trim), value: (.v | trim | if test("^[0-9]+-[0-9]+$") then (split("-") | {min: (.[0] | tonumber), max: (.[1] | tonumber)}) else . end)})
+    | from_entries;
   def list: if . == "" or (ascii_downcase == "none") then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end;
   split("\n") | map(select(. != "") | split("\t")) as $r
   | ($r | map(select(.[0] == "unit")) | to_entries | map({id: .value[1], index: .key, title: .value[2]})) as $units
@@ -50,7 +58,7 @@ parsed=$(printf '%s\n' "$records" | jq -R -s '
         depends_on: ([$r[] | select(.[0] == "depends" and .[1] == $u.id) | .[2]][0] // "none" | list),
         covers: ([$r[] | select(.[0] == "covers" and .[1] == $u.id) | .[2]][0] // "" | list),
         scope: ([$r[] | select(.[0] == "scope" and .[1] == $u.id) | .[2]] | join(" "))
-      })),
+      } + ([$r[] | select(.[0] == "routing" and .[1] == $u.id) | .[2]][0] | if . == null then {} else {routing: routing} end))),
       out_of_scope: ($r | map(select(.[0] == "oos") | .[1]) | join("\n"))
     }')
 
@@ -76,6 +84,10 @@ problems=$(printf '%s' "$parsed" | jq -r '
         | [range(0; .depends_on | length) as $i | range($i + 1; .depends_on | length) as $j | [.depends_on[$i], .depends_on[$j]]
            | select(([.[0]] - ancestors($deps; .[1]) | length) > 0 and ([.[1]] - ancestors($deps; .[0]) | length) > 0)][0]
         | select(. != null) | "\($u.id) depends on independent units \(.[0]) and \(.[1]); make one depend on the other"),
+      ($p.units[] | . as $u | (.routing // {}) | keys_unsorted[] | select(. as $k | ["workers", "personas", "security"] | index($k) | not) | "\($u.id) routing has unknown key \(.)"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("workers")) | .workers | select((type != "string") or ((. as $w | ["haiku", "sonnet", "opus", "best"] | index($w) | not) and (test("^claude-[a-z0-9-]+$") | not))) | "\($u.id) routing workers must be haiku, sonnet, opus, best or a claude-* model id"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("personas")) | .personas | select((type != "object") or (.min < 1) or (.min > .max)) | "\($u.id) routing personas must be <min>-<max> with 1 <= min <= max"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("security")) | .security | select(. != "workers" and . != "staff") | "\($u.id) routing security must be workers or staff"),
       ($p.units[] | select(.covers | length == 0) | "\(.id) has no - Covers: line"),
       ($ids[] | select(. as $c | [$p.units[].covers[]] | index($c) | not) | "\(.) is not covered by any unit")
     ] | .[]')
