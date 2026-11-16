@@ -27,11 +27,13 @@ check "prices multiply out to a known figure" '.usd == 12.3 and .unpriced_models
 check "ABC-2 sums separately" '.usd == 6 and (.tokens | keys) == ["claude-sonnet-x"]' ABC-2 "$fx" "$fx/config.json"
 check "unparsable transcript line gives null cost" '.usd == null' ABC-3 "$fx" "$fx/config.json"
 check "an unpriced model is listed and gives null cost" '.usd == null and .unpriced_models == ["claude-mystery-x"]' ABC-4 "$fx" "$fx/config.json"
-check "no matching transcripts is zero" '. == {"usd":0,"tokens":{},"unpriced_models":[]}' ABC-9 "$fx" "$fx/config.json"
+check "no matching transcripts is null cost with matched 0, never a false 0" '. == {"usd":null,"tokens":{},"unpriced_models":[],"matched":0}' ABC-9 "$fx" "$fx/config.json"
+check "a message id repeated on several lines counts once (the largest output wins; id-less lines still count)" '.usd == 7.5 and .tokens["claude-sonnet-x"].input_tokens == 2000000 and .tokens["claude-sonnet-x"].output_tokens == 100000' ABC-6 "$fx" "$fx/config.json"
+check "matched counts the transcripts used" '.matched == 2' ABC-1 "$fx" "$fx/config.json"
 check "autopilot unit tag matches with --run and --unit" '.usd == 3' ABC-5 "$fx" "$fx/config.json" --run /runs/run-7 --unit U2
 check "unit tag does not match a longer key (ABC-5 vs ABC-50)" '.usd == 3 and .tokens["claude-sonnet-x"].input_tokens == 1000000' ABC-5 "$fx" "$fx/config.json" --run /runs/run-7 --unit U2
-check "the unit tag needs the run dir to match" '.usd == 0' ABC-5 "$fx" "$fx/config.json" --run /runs/other --unit U2
-check "without --run the unit tag alone does not match" '.usd == 0' ABC-5 "$fx" "$fx/config.json"
+check "the unit tag needs the run dir to match" '.usd == null and .matched == 0' ABC-5 "$fx" "$fx/config.json" --run /runs/other --unit U2
+check "without --run the unit tag alone does not match" '.usd == null and .matched == 0' ABC-5 "$fx" "$fx/config.json"
 
 status=0
 bash "$script" ABC-1 >/dev/null 2>&1 || status=$?

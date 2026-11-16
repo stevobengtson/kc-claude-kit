@@ -9,7 +9,7 @@
 # An empty <transcripts-dir> ("") means ~/.claude/projects/<cwd with / replaced by ->.
 # Prints {"usd": <number|null>, "tokens": {<model>: {...}}, "unpriced_models": [...]}.
 # usd is null when a model has no price or a matched transcript has a line that
-# does not parse; no matching transcripts is {"usd":0,"tokens":{},"unpriced_models":[]}.
+# does not parse, or when no transcript matches (never a false 0); "matched" counts the transcripts used.
 # Exit: 0 printed; 1 refused ("cost: <problem>" on stderr); 2 jq missing or a usage error.
 # jq programs are single-quoted on purpose; their $vars are jq variables.
 # shellcheck disable=SC2016
@@ -52,7 +52,8 @@ summarize='
                   and ([$first | split("\n")[] | select(. == ("Unit " + $unit + ": " + $key) or startswith("Unit " + $unit + ": " + $key + " "))] | length > 0))),
       bad: ([$lines[] | select(type != "object" or .bad == true)] | length > 0),
       usage: ([$lines[] | select(type == "object" and .type == "assistant" and (.message.usage | type) == "object")
-               | {model: (.message.model // "unknown"), u: .message.usage}]
+               | {id: .message.id, model: (.message.model // "unknown"), u: .message.usage}]
+              | (map(select(.id == null)) + (map(select(.id != null)) | group_by(.id) | map(to_entries | sort_by([.value.u.output_tokens // 0, .key]) | last | .value)))
               | group_by(.model)
               | map({key: .[0].model, value: {
                   input_tokens: (map(.u.input_tokens // 0) | add),
@@ -84,10 +85,11 @@ jq -s -c --argjson prices "$prices" '
           or ([$price_key | to_entries[] | select(($t[.key] // 0) > 0 and (($prices[$model][.value] | type) != "number"))] | length > 0)))
       | map(.key) | sort) as $unpriced
   | {
-      usd: (if ($m | length) == 0 then 0
+      usd: (if ($m | length) == 0 then null
             elif ($unpriced | length) > 0 or ($m | map(.bad) | any) then null
             else ($tokens | to_entries | map(. as $e | $price_key | to_entries | map(($e.value[.key] // 0) * ($prices[$e.key][.value] // 0)) | add) | add // 0) / 1000000
             end),
       tokens: $tokens,
-      unpriced_models: $unpriced
+      unpriced_models: $unpriced,
+      matched: ($m | length)
     }' "$summaries"

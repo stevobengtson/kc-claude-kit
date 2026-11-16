@@ -1,2 +1,2 @@
 {"type":"user","message":{"role":"user","content":"Run dir /runs/run-7\n\nUnit U1: ABC-50 Other"}}
-{"type":"assistant","message":{"model":"claude-sonnet-x","usage":{"input_tokens":9000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"assistant","message":{"id":"msg_007","model":"claude-sonnet-x","usage":{"input_tokens":9000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
