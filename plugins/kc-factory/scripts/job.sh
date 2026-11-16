@@ -12,6 +12,8 @@
 #   job.sh list                         print KEY<TAB>stage<TAB>title per job
 # Exit: 0 ok; 1 refused ("job: <problem>" on stderr); 2 jq missing or bad usage.
 # Set FACTORY_NOW to pin the clock (tests).
+# jq programs are single-quoted on purpose; their $vars are jq variables.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 # Legal moves: "<from> <to>..." per line. A stage with no targets is terminal.
@@ -44,21 +46,27 @@ jobs_dir="$home/jobs"
 
 now() { echo "${FACTORY_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; }
 
-# Writes stdin to <file> through a temp file so a crash never leaves half a file.
-write_atomic() {
-  local file=$1 tmp
-  tmp=$(mktemp "$file.XXXXXX")
-  cat > "$tmp"
-  mv "$tmp" "$file"
+# Runs jq with the given arguments and replaces <dest> with its output, via a
+# temp file, only when jq succeeds: a failed jq never truncates <dest>.
+write_jq() {
+  local dest=$1 tmp
+  shift
+  tmp=$(mktemp "$dest.XXXXXX")
+  if jq "$@" > "$tmp"; then
+    mv "$tmp" "$dest"
+  else
+    rm -f "$tmp"
+    refuse "could not write $dest"
+  fi
 }
 
 rewrite_index() {
   local files=()
   [ -d "$jobs_dir" ] && while IFS= read -r f; do files+=("$f"); done < <(find "$jobs_dir" -mindepth 2 -maxdepth 2 -name job.json)
   if [ "${#files[@]}" = 0 ]; then
-    echo '[]' | write_atomic "$jobs_dir/index.json"
+    write_jq "$jobs_dir/index.json" -n '[]'
   else
-    jq -s 'sort_by(.key)' "${files[@]}" | write_atomic "$jobs_dir/index.json"
+    write_jq "$jobs_dir/index.json" -s 'sort_by(.key)' "${files[@]}"
   fi
 }
 
@@ -76,6 +84,7 @@ case "$cmd" in
   create)
     [ "$#" = 2 ] || usage
     key=$1 config=$2
+    case "$key" in *$'\n'*) refuse "key must be a single line" ;; esac
     [ -f "$config" ] || refuse "$config not found"
     pattern=$(jq -r '"^(" + (.tracker.project_keys | join("|")) + ")-[0-9]+$"' "$config")
     printf '%s' "$key" | grep -Eq "$pattern" || refuse "$key is not a ticket key in project_keys"
@@ -90,9 +99,8 @@ case "$cmd" in
     fi
     mkdir -p "$jobs_dir/$key"
     at=$(now)
-    jq -n --arg key "$key" --arg at "$at" \
-      '{key: $key, stage: "intake", created_at: $at, updated_at: $at, history: [{stage: "intake", at: $at}]}' \
-      | write_atomic "$file"
+    write_jq "$file" -n --arg key "$key" --arg at "$at" \
+      '{key: $key, stage: "intake", created_at: $at, updated_at: $at, history: [{stage: "intake", at: $at}]}'
     rewrite_index
     echo "$jobs_dir/$key"
     ;;
@@ -102,11 +110,11 @@ case "$cmd" in
     require_job "$key"
     file=$(job_file "$key")
     from=$(jq -r '.stage' "$file")
-    allowed=$(printf '%s\n' "$transitions" | awk -v from="$from" '$1 == from { for (i = 2; i <= NF; i++) print $i }')
-    printf '%s\n' "$allowed" | grep -qxF "$to" || refuse "$key cannot move from $from to $to"
+    legal=$(printf '%s\n' "$transitions" | awk -v from="$from" -v to="$to" '$1 == from { for (i = 2; i <= NF; i++) if ($i == to) print "yes" }')
+    [ "$legal" = yes ] || refuse "$key cannot move from $from to $to"
     at=$(now)
-    jq --arg to "$to" --arg at "$at" \
-      '.stage = $to | .updated_at = $at | .history += [{stage: $to, at: $at}]' "$file" | write_atomic "$file"
+    write_jq "$file" --arg to "$to" --arg at "$at" \
+      '.stage = $to | .updated_at = $at | .history += [{stage: $to, at: $at}]' "$file"
     rewrite_index
     ;;
   set)
@@ -117,10 +125,10 @@ case "$cmd" in
       *" $field "*) ;;
       *) refuse "$field is not a settable field" ;;
     esac
-    printf '%s' "$value" | jq -e . >/dev/null 2>&1 || refuse "value for $field is not valid JSON"
+    printf '%s' "$value" | jq empty >/dev/null 2>&1 || refuse "value for $field is not valid JSON"
     file=$(job_file "$key")
-    jq --arg field "$field" --argjson value "$value" --arg at "$(now)" \
-      '.[$field] = $value | .updated_at = $at' "$file" | write_atomic "$file"
+    write_jq "$file" --arg field "$field" --argjson value "$value" --arg at "$(now)" \
+      '.[$field] = $value | .updated_at = $at' "$file"
     rewrite_index
     ;;
   show)

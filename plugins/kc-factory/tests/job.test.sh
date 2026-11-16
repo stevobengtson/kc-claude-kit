@@ -127,6 +127,39 @@ expect_refusal "set refuses a non-JSON value" "job: value for risk is not valid 
 expect_refusal "set refuses a missing job" "job: ABC-9 has no job" set ABC-9 risk '"low"'
 expect_refusal "show refuses a missing job" "job: ABC-9 has no job" show ABC-9
 
+fresh_home clear
+job create ABC-1 "$work/config.json" >/dev/null
+job set ABC-1 pr_url '"https://example.com/pr/1"'
+job set ABC-1 pr_url null
+job set ABC-1 reason false
+if [ "$(job show ABC-1 | jq -c '[.pr_url, .reason]')" = '[null,false]' ]; then
+  pass "set: null and false are storable values"
+else
+  fail "set: null and false are storable values" "$(job show ABC-1)"
+fi
+
+fresh_home corrupt
+job create ABC-1 "$work/config.json" >/dev/null
+echo '{broken' > "$home/jobs/ABC-1/job.json"
+status=0
+job set ABC-1 risk '"low"' >/dev/null 2>&1 || status=$?
+if [ "$status" != 0 ] && [ "$(cat "$home/jobs/ABC-1/job.json")" = '{broken' ]; then
+  pass "corrupt job.json: set fails and leaves the file unchanged"
+else
+  fail "corrupt job.json: set fails and leaves the file unchanged" "status $status, file: $(cat "$home/jobs/ABC-1/job.json")"
+fi
+
+fresh_home edge
+job create ABC-1 "$work/config.json" >/dev/null
+expect_refusal "advance refuses an empty stage" "job: ABC-1 cannot move from intake to " advance ABC-1 ""
+expect_refusal "create refuses a key containing a newline" "job: key must be a single line" create "$(printf 'XYZ-1\nABC-1')" "$work/config.json"
+for step in queued delivering ready; do job advance ABC-1 "$step" >/dev/null; done
+if [ "$(job create ABC-1 "$work/config.json")" = "$home/jobs/ABC-1" ]; then
+  pass "create on a ready job prints its dir"
+else
+  fail "create on a ready job prints its dir" "wrong output"
+fi
+
 fresh_home later
 job create ABC-1 "$work/config.json" >/dev/null
 later=$(FACTORY_HOME="$home" FACTORY_NOW=2026-02-03T04:05:06Z bash "$script" set ABC-1 reason '"waiting"' && FACTORY_HOME="$home" bash "$script" show ABC-1)
