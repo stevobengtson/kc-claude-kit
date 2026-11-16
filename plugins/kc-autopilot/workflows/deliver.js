@@ -20,6 +20,11 @@ const LIMITS = CFG.limits
 const MINOR_FIX_ROUNDS = 2
 const WORKERS = CFG.models.workers
 const STAFF = CFG.models.staff
+// A plan unit's Routing line may pick its own worker model, a higher persona minimum, or the
+// staff model for the security lens; a unit without one runs on the config defaults.
+const workersOf = unit => (unit.routing && unit.routing.workers) || WORKERS
+const lensModelOf = (unit, lens) => lens === 'security' && unit.routing && unit.routing.security === 'staff' ? STAFF : workersOf(unit)
+const personaMinOf = unit => (unit.routing && unit.routing.personas && unit.routing.personas.min) || LIMITS.qa_personas.min
 const SCRIPTS = `${A.plugin_root}/scripts`
 const CONFIG_PATH = `${A.run_dir}/config.json`
 // kc-code-review's phase-1 gates (plugins/kc-gates/skills/kc-code-review/SKILL.md, Step 2).
@@ -141,7 +146,7 @@ async function runUnit(unit, baseBranch, progress, parentPr) {
   }
   const ops = async (label, command, cwd, flags) => {
     const out = await call(`Run from ${cwd}:\n${command}\nScripts directory: ${SCRIPTS}`,
-      { agentType: 'kc-autopilot:ops', model: WORKERS, effort: 'low', schema: OPS, label: `${tag} ${label}`, phase: 'Build' }, flags)
+      { agentType: 'kc-autopilot:ops', model: workersOf(unit), effort: 'low', schema: OPS, label: `${tag} ${label}`, phase: 'Build' }, flags)
     if (!out) throw new Stop('failed', `ops ${label} returned nothing`)
     return out
   }
@@ -154,7 +159,7 @@ async function runUnit(unit, baseBranch, progress, parentPr) {
   }
 
   const personas = unit.contract.personas
-  if (personas.length < LIMITS.qa_personas.min) throw new Stop('failed', `contract has ${personas.length} personas; qa_personas.min is ${LIMITS.qa_personas.min}`)
+  if (personas.length < personaMinOf(unit)) throw new Stop('failed', `contract has ${personas.length} personas; qa_personas.min is ${personaMinOf(unit)}${unit.routing ? ' (routing)' : ''}`)
 
   const wt = await ops('worktree', `bash ${SCRIPTS}/worktree.sh create ${A.repo} ${A.run_id} ${unit.id} ${baseBranch} ${unit.contract.branch}`, A.repo)
   if (wt.exit_code !== 0) throw new Stop('failed', `worktree: ${wt.output}`)
@@ -179,7 +184,7 @@ async function runUnit(unit, baseBranch, progress, parentPr) {
   ].filter(Boolean).join('\n')
   const ctx = { unit, tag, worktree, baseBranch, state, context, call, ops, note, retryOnce }
   const engineer = async (mode, extra) => {
-    const out = await call(`Mode: ${mode}\n${context}\n${extra || ''}`, { agentType: 'kc-autopilot:engineer', model: WORKERS, schema: ENGINEER, label: `${tag} engineer ${mode}`, phase: mode === 'propose' ? 'Design' : 'Build' })
+    const out = await call(`Mode: ${mode}\n${context}\n${extra || ''}`, { agentType: 'kc-autopilot:engineer', model: workersOf(unit), schema: ENGINEER, label: `${tag} engineer ${mode}`, phase: mode === 'propose' ? 'Design' : 'Build' })
     if (!out) throw new Stop('failed', `engineer ${mode} returned nothing`)
     if (out.status === 'plan-conflict') throw new Stop('blocked:plan-conflict', out.notes || out.summary)
     if (out.status === 'risky') throw new Stop('blocked:risky', out.notes || out.summary)
@@ -288,7 +293,7 @@ async function runUnit(unit, baseBranch, progress, parentPr) {
 
     const result = unitResult(unit, progress.rounds, criteria, decision.rationale, finalRationale, reviewLog, { qa: Object.values(qaLog), preexisting: qaPreexisting, receipts: reviewReceipts }, decisions)
     const ship = await call(`Worktree: ${worktree}\nBranch: ${branch}\nBase: ${baseBranch}\nTitle: ${unit.contract.pr_title}\nScratch: ${state}\nScripts directory: ${SCRIPTS}\ndry_run: ${A.dry_run}\nparent_pr: ${parentPr || 'none'}\nDeferred minor items: ${JSON.stringify(result.review.deferred_minor)}`,
-      { agentType: 'kc-autopilot:shipper', model: WORKERS, schema: SHIP, label: `${tag} ship`, phase: 'Ship' })
+      { agentType: 'kc-autopilot:shipper', model: workersOf(unit), schema: SHIP, label: `${tag} ship`, phase: 'Ship' })
     if (!ship) throw new Stop('failed', 'shipper returned nothing')
     // Even a dry run must leave the PR body behind.
     if (!ship.body) throw new Stop('failed', `shipper rendered no PR body: ${ship.notes || 'no notes'}`)
@@ -342,7 +347,7 @@ async function reviewStage({ unit, tag, worktree, baseBranch, state, context, ca
     for (let round = 1; round <= passes; round += 1) {
       const out = await retryOnce(`lens ${lens} r${round}`, label => call(
         `Lens: ${lens}\n${context}\nBase: ${baseBranch}${focusNote}\nAlready reported (do not repeat): ${JSON.stringify(found.map(f => f.location + ' ' + f.scenario))}${earlier && `\n${earlier}`}`,
-        { agentType, model: WORKERS, schema: FINDINGS, label: `${tag} ${label}`, phase: 'Review' }))
+        { agentType, model: lensModelOf(unit, lens), schema: FINDINGS, label: `${tag} ${label}`, phase: 'Review' }))
       if (!out) throw new Stop('failed', `lens ${lens} did not run`)
       if (out.skipped) note(`lens ${lens}`, 'skipped', out.skipped)
       const fresh = out.findings.filter(f => f.location && f.scenario)
@@ -363,7 +368,7 @@ async function reviewStage({ unit, tag, worktree, baseBranch, state, context, ca
   if (toJudge.length) {
     const votes = await settle([1, 2].map(n => () => call(
       `Try to refute each of these review findings. Read the code at ${worktree}. For each, return refuted=false only if you confirm the scenario really breaks; otherwise refuted=true with the reason.\nFindings: ${JSON.stringify(toJudge.map((f, index) => ({ index, ...f })))}`,
-      { agentType: 'kc-autopilot:skeptic', model: WORKERS, schema: REFUTES, label: `${tag} skeptic ${n}`, phase: 'Review' })))
+      { agentType: 'kc-autopilot:skeptic', model: workersOf(unit), schema: REFUTES, label: `${tag} skeptic ${n}`, phase: 'Review' })))
     if (votes.some(v => !v)) note('skeptics', 'null', 'a skeptic returned nothing; its votes count as not refuted')
     const refutations = index => votes.filter(v => v && v.verdicts.some(x => x.index === index && x.refuted)).length
     judged = toJudge.filter((f, index) => refutations(index) < 2)
@@ -383,7 +388,7 @@ async function reviewStage({ unit, tag, worktree, baseBranch, state, context, ca
   if (!fails.length && !toTriage.length) return { fix: [], dismiss: [], receipts, deferred, headSha, topics }
 
   const triage = await call(`Triage these findings for ${worktree}.\n${planSpecs(unit)}\nGate FAILs: ${JSON.stringify(fails)}\nLens findings: ${JSON.stringify(toTriage)}${fails.some(f => f.lens === 'verification') ? '\nItems with lens "verification" cite code in this diff: never dismiss one as a format or citation issue.' : ''}${earlier && `\n${earlier}\nDismiss an item that only reverses an earlier decision, with reason "reverses round N decision without new scenario" (N from that decision).`}`,
-    { agentType: 'kc-autopilot:triage', model: WORKERS, schema: TRIAGE, label: `${tag} triage`, phase: 'Review' })
+    { agentType: 'kc-autopilot:triage', model: workersOf(unit), schema: TRIAGE, label: `${tag} triage`, phase: 'Review' })
   return { ...(triage || { fix: [...fails, ...toTriage].map(f => ({ finding: `${f.location} ${f.scenario}`, reason: 'triage returned nothing' })), dismiss: [] }), receipts, deferred, headSha, topics }
 }
 
@@ -453,7 +458,7 @@ async function reviewPrep({ unit, tag, worktree, reviewBase, state, call, retryO
     `1. Run exactly: cd ${worktree} && bash ${CR()}/scripts/gather-review.sh --branch ${reviewBase} --out-dir ${outDir}\n` +
     `2. Read the diff it saved in full (in offset/limit chunks if it is 35KB or more), and write the SCOPE: block for this local branch, one box per line in the BOXES: shape, each with evidence or its N/A reason: §G1 (N/A: local diff), §G2 against the stated purpose "${unit.title}: ${unit.scope}", §G3 (N/A: no linked issue), §G4.\n` +
     `Return exit_code (gather-review.sh's), output (its stdout and stderr), head_sha, diff_file and changed_files (HEAD_SHA, DIFF_FILE, CHANGED_FILES from its meta.env), files (the paths listed in CHANGED_FILES), and scope (the whole SCOPE: block starting with "SCOPE:").`,
-    { agentType: 'kc-autopilot:review-prep', model: WORKERS, effort: 'low', schema: PREP, label: `${tag} ${label}`, phase: 'Review' }))
+    { agentType: 'kc-autopilot:review-prep', model: workersOf(unit), effort: 'low', schema: PREP, label: `${tag} ${label}`, phase: 'Review' }))
   if (!prep) throw new Stop('failed', 'kc-gates prep did not run')
   if (prep.exit_code !== 0) throw new Stop('failed', `kc-gates gather failed: ${prep.output || ''}`)
   return prep
@@ -470,7 +475,7 @@ async function codeReviewGates({ unit, tag, worktree, reviewBase, call, note, ea
     let parsed = null
     let text = null
     for (const label of [`gate ${gate}${pass}`, `gate ${gate}${pass} retry`]) {
-      text = await call(prompt, { agentType: `kc-gates:${gate}-gate`, model: WORKERS, label: `${tag} ${label}`, phase: 'Review' })
+      text = await call(prompt, { agentType: `kc-gates:${gate}-gate`, model: workersOf(unit), label: `${tag} ${label}`, phase: 'Review' })
       parsed = parseGateBlock(text)
       if (parsed && !unexplainedFail(parsed)) break
       const why = parsed ? 'STATUS: FAIL with no FAIL box or finding' : (text ? 'verdict block has no STATUS:/BOXES:' : 'returned nothing')
@@ -583,17 +588,17 @@ async function qaStage({ unit, tag, worktree, state, context, call, ops, note })
     const login = CFG.launch.login ? `Login: ${JSON.stringify(CFG.launch.login)} (credentials are in those env vars)` : 'No login needed.'
     const reports = await settle(personas.map((persona, n) => () => call(
       `Persona: ${JSON.stringify(persona)}\nApp: ${url}\n${login}\nEvidence directory: ${state}/qa/${n}\n${context}`,
-      { agentType: 'kc-autopilot:qa-persona', model: WORKERS, schema: QA, label: `${tag} qa ${persona.name}`, phase: 'QA' })))
+      { agentType: 'kc-autopilot:qa-persona', model: workersOf(unit), schema: QA, label: `${tag} qa ${persona.name}`, phase: 'QA' })))
     // A persona that saved nothing it ran did not really run; it counts as no report.
     reports.forEach((r, n) => {
       if (!r) note(`qa ${personas[n].name}`, 'null', 'persona returned nothing')
       else if (!(r.ran || []).length) { note(`qa ${personas[n].name}`, 'no evidence', 'persona saved nothing it ran; not counted'); reports[n] = null }
     })
     const reported = reports.filter(Boolean).length
-    if (reported < LIMITS.qa_personas.min) throw new Stop('failed', `only ${reported} personas reported`)
+    if (reported < personaMinOf(unit)) throw new Stop('failed', `only ${reported} personas reported`)
     const qa = reports.map((r, n) => ({ persona: personas[n].name, bugs: r ? r.bugs : [], not_covered: r ? (r.not_covered || []) : ['agent returned nothing'] }))
     const verdict = await call(`App: ${url}\n${login}\nEvidence directory: ${state}/verify\n${context}\nContract with checks: ${JSON.stringify(unit.contract.criteria)}\nQA reports: ${JSON.stringify(qa)}`,
-      { agentType: 'kc-autopilot:verifier', model: WORKERS, schema: VERDICT, label: `${tag} verifier`, phase: 'QA' })
+      { agentType: 'kc-autopilot:verifier', model: workersOf(unit), schema: VERDICT, label: `${tag} verifier`, phase: 'QA' })
     if (!verdict) {
       note('verifier', 'null', 'returned nothing')
       throw new Stop('failed', 'verifier returned nothing')
