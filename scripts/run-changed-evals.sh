@@ -164,7 +164,8 @@ while IFS= read -r case_dir; do
   fi
   result=$results_dir/${case_dir//\//_}.json
   echo "run  $case_dir"
-  # --allow-tools takes a list, so it stays last.
+  # --allow-tools takes a list, so it stays last. A gated tool reaches only a case whose
+  # allowed_tools also names it: Write, for one whose agent writes its output file.
   claude plugin eval "${target[@]}" \
     --case "$case_name" \
     --runs 1 \
@@ -176,7 +177,7 @@ while IFS= read -r case_dir; do
     --judge-model "$JUDGE_MODEL" \
     --no-publish \
     --max-cost-usd 10 \
-    --allow-tools Bash Agent >&2 || true
+    --allow-tools Bash Agent Write >&2 || true
   if [ ! -s "$result" ]; then
     verdict="the eval run wrote no result"
     printf '{}\n' > "$result"
@@ -229,7 +230,7 @@ while IFS= read -r case_dir; do
           --judge-model "$JUDGE_MODEL" \
           --no-publish \
           --max-cost-usd 10 \
-          --allow-tools Bash Agent >&2 ) || true
+          --allow-tools Bash Agent Write >&2 ) || true
       git worktree remove --force "$base_tree"
       [ -s "$base_result" ] || printf '{}\n' > "$base_result"
       verdict=$(jq -r --arg name "$case_name" '

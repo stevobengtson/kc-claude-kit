@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: intake-accept
+description: A clear storefront ticket for a colour filter, with no acceptance criteria of its own, is accepted at low or medium risk with the ui surface, and intake.md carries the sections the plan is built from plus criteria intake wrote.
+tags: [factory, intake, positive]
+context:
+  scaffold_script: setup.sh
