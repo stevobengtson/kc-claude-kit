@@ -10,7 +10,10 @@ script="$plugin_dir/scripts/dashboard.sh"
 work=$(mktemp -d)
 server_pid=""
 cleanup() {
-  [ -z "$server_pid" ] || kill "$server_pid" 2>/dev/null || true
+  if [ -n "$server_pid" ]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
