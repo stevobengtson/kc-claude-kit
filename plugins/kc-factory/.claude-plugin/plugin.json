@@ -3,6 +3,7 @@
   "description": "Tracker tickets in, ready PRs out: intake, risk-based routing and an autopilot run per ticket, with a dashboard beside the chat",
   "version": "0.1.0",
   "author": { "name": "Sujeet Kc" },
+  "types": "./types/index.d.ts",
   "dependencies": [
     { "name": "kc-autopilot", "version": "^0.3.2" }
   ]

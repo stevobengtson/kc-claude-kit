@@ -151,7 +151,7 @@ Continue here in the same turn, once kc-run's step 6 has written its report:
 
 ## 7. Report
 
-One line per named key, in the order given: the key, its stage, and the PR link, the question count, the reason, or what it waits for. Then any tracker write that failed (from `tracker.log`) or was skipped because its kind is not in `comment_on`. Then cost per job, `unknown` for `null`. End with where to look: `.factory/jobs/<KEY>/`, and `/kc-factory:dashboard` for the dashboard pane.
+One line per named key, in the order given: the key, its stage, and the PR link, the question count, the reason, or what it waits for. Then any tracker write that failed (from `tracker.log`) or was skipped because its kind is not in `comment_on`. Then cost per job, `unknown` for `null`. End with where to look: `.factory/jobs/<KEY>/`, and `/factory-dashboard` for the dashboard pane.
 
 ## 8. Free-form mode
 
@@ -162,6 +162,6 @@ Answer from the job store; read before you write. `job.sh list` prints every job
 - **Cost.** `cost_usd` from `job.sh show`, `unknown` when it is `null` or missing.
 - **Feedback for a blocked job.** Write the user's words, verbatim, to `<job-dir>/feedback-<n>.md` (`<n>` as in step 3), and tell them `/kc-factory:factory <KEY>` resumes it. Only a `blocked` job takes feedback; a `needs-info` job takes its answers on the ticket.
 - **Reject a parked job** (`needs-info` or `blocked`), only when the user asks for that key. `job.sh set <KEY> reason` with their reason as a JSON string, `job.sh advance <KEY> rejected`, post the `reject` comment (the Tracker precondition applies), and when the job has a `pr_url`, `gh pr close <pr_url>`.
-- **The dashboard.** `/kc-factory:dashboard` opens the factory pane beside the chat.
+- **The dashboard.** `/factory-dashboard` opens the factory pane beside the chat.
 
 Anything else that would change a job (moving a stage, posting on a ticket, deleting a job) is not a free-form action: say what the user can run instead.
