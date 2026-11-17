@@ -100,6 +100,10 @@ describe('format', () => {
   test('cost', async () => {
     expect([formatCost(1.5), formatCost(null), formatCost(undefined)]).toEqual(['$1.50', 'cost unavailable', 'cost unavailable'])
   })
+
+  test('a partial cost is a lower bound', async () => {
+    expect([formatCost(1.5, true), formatCost(1.5, false), formatCost(null, true)]).toEqual(['$1.50+', '$1.50', 'cost unavailable'])
+  })
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -153,6 +157,28 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
     expect(JSON.stringify(await ui.drawn())).toContain('cost unavailable')
+    await ui.unmount()
+  })
+
+  test(`a partial cost draws "$X+" and says what it leaves out on ${surface}`, async ($, on) => {
+    world(on, JSON.stringify([{ ...ORDER_TOTALS, cost_partial: true }]))
+    await runDashboard($)
+
+    const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
+    const drawn = JSON.stringify(await ui.drawn())
+    expect(drawn).toContain('$1.50+')
+    expect(drawn).toContain('agents shared across the run not included')
+    await ui.unmount()
+  })
+
+  test(`a whole cost has no "+" and no note on ${surface}`, async ($, on) => {
+    world(on, JSON.stringify([ORDER_TOTALS]))
+    await runDashboard($)
+
+    const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
+    const drawn = JSON.stringify(await ui.drawn())
+    expect(drawn).not.toContain('$1.50+')
+    expect(drawn).not.toContain('agents shared across the run not included')
     await ui.unmount()
   })
 

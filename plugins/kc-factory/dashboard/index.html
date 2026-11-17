@@ -72,8 +72,13 @@ function elapsed(job) {
   return Math.max(0, end - start);
 }
 
-function formatCost(c) {
-  return typeof c === "number" ? "$" + c.toFixed(2) : "cost unavailable";
+// What a partial cost leaves out: run-wide agents (review prep, gates, shipping) no one job owns.
+var PARTIAL_COST_NOTE = "agents shared across the run not included";
+
+// A partial cost is a lower bound, so it reads "$X+".
+function formatCost(c, partial) {
+  if (typeof c !== "number") return "cost unavailable";
+  return "$" + c.toFixed(2) + (partial === true ? "+" : "");
 }
 
 // The text of a file's "## Summary" section, or null when it has none.
@@ -155,8 +160,14 @@ function drawCard(job) {
   var details = [];
   if (job.risk !== undefined) details.push("risk " + job.risk);
   if (Array.isArray(job.surfaces) && job.surfaces.length > 0) details.push(job.surfaces.join(", "));
-  details.push(formatCost(job.cost_usd));
-  card.appendChild(el("div", "dim", details.join(" · ")));
+  var detailLine = el("div", "dim", details.length > 0 ? details.join(" · ") + " · " : "");
+  var cost = el("span", null, formatCost(job.cost_usd, job.cost_partial));
+  if (job.cost_partial === true && typeof job.cost_usd === "number") {
+    cost.title = PARTIAL_COST_NOTE;
+    cost.setAttribute("aria-label", cost.textContent + " (" + PARTIAL_COST_NOTE + ")");
+  }
+  detailLine.appendChild(cost);
+  card.appendChild(detailLine);
   if (job.reason !== undefined) card.appendChild(el("div", "dim", job.reason));
   if (job.pr_url !== undefined) {
     var url = String(job.pr_url);

@@ -10,6 +10,8 @@ export type JobCard = {
   pr_url?: string
   reason?: string
   cost_usd?: number | null
+  // true when cost_usd leaves out agents the whole run shared, so it is a lower bound.
+  cost_partial?: boolean
   created_at: string
   updated_at: string
 }

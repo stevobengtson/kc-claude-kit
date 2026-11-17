@@ -7,7 +7,7 @@
 #   job.sh create <KEY> <config.json>   print the job dir (config is read-config.sh output)
 #   job.sh advance <KEY> <stage>        move the job one legal step
 #   job.sh set <KEY> <field> <json>     set risk, surfaces, run_id, unit, pr_url,
-#                                       branch, title, reason or cost_usd
+#                                       branch, title, reason, cost_usd or cost_partial
 #   job.sh show <KEY>                   print job.json
 #   job.sh list                         print KEY<TAB>stage<TAB>title per job
 # Exit: 0 ok; 1 refused ("job: <problem>" on stderr); 2 jq missing or bad usage.
@@ -24,7 +24,7 @@ delivering ready blocked
 blocked queued rejected
 ready
 rejected'
-settable_fields='risk surfaces run_id unit pr_url branch title reason cost_usd'
+settable_fields='risk surfaces run_id unit pr_url branch title reason cost_usd cost_partial'
 
 command -v jq >/dev/null 2>&1 || { echo "job: jq is required" >&2; exit 2; }
 

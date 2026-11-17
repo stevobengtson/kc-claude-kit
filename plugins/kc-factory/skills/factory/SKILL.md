@@ -142,11 +142,11 @@ Continue here in the same turn, once kc-run's step 6 has written its report:
    - Record the unit's `branch` from `result.json` when it has one: `job.sh set <KEY> branch '"<branch>"'`.
    - `ready`: move the ticket to `tracker.statuses.in_review`, then post the `ready` comment.
    - `blocked`: write what the user must decide for that unit (from kc-run's report, in plain words; from the reason alone when there is no report) to `<job-dir>/blocked.md`, then post the `blocked` comment. The ticket's status stays as it is.
-4. Cost per job: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cost.sh <KEY> "" .factory/config.json --run <autopilot run dir> --unit <Uid>` prints JSON whose `usd` is a number or `null` (unknown, never a guess). Without a known autopilot run dir, leave out `--run` and `--unit` (intake only). `job.sh set <KEY> cost_usd <usd>` with that value as it is, `null` included. Cost is API-equivalent spend, not a bill, and covers this run and the job's intake.
+4. Cost per job: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cost.sh <KEY> "" .factory/config.json --run <autopilot run dir> --unit <Uid>` prints JSON whose `usd` is a number or `null` (unknown, never a guess) and whose `partial` says whether agents the whole run shared (review prep, gates, triage, shipping) were left out; their price is then `run_overhead_usd`. Without a known autopilot run dir, leave out `--run` and `--unit` (intake only). `job.sh set <KEY> cost_usd <usd>` with that value as it is, `null` included, and `job.sh set <KEY> cost_partial <partial>`. If `cost.sh` exits nonzero (no transcripts dir, say), set `cost_usd` to `null` and `cost_partial` to `false`. Cost is API-equivalent spend, not a bill, and covers this run and the job's intake; a partial cost is a lower bound, shown as `$X+`.
 
 ## 7. Report
 
-One line per named key, in the order given: the key, its stage, and the PR link, the question count, the reason, or what it waits for. Then any tracker write that failed (from `tracker.log`) or was skipped because its kind is not in `comment_on`. Then cost per job, `unknown` for `null`. End with where to look: `.factory/jobs/<KEY>/`, and `/factory-dashboard` for the dashboard pane.
+One line per named key, in the order given: the key, its stage, and the PR link, the question count, the reason, or what it waits for. Then any tracker write that failed (from `tracker.log`) or was skipped because its kind is not in `comment_on`. Then cost per job, `unknown` for `null`, `$X+` when `cost_partial` is true, and once per run its `run_overhead_usd`: the agents its units shared, in no job's cost. End with where to look: `.factory/jobs/<KEY>/`, and `/factory-dashboard` for the dashboard pane.
 
 ## 8. Free-form mode
 
@@ -154,7 +154,7 @@ Answer from the job store; read before you write. `job.sh list` prints every job
 
 - **Status, "what needs me".** Each job's stage and what it waits for: `needs-info` waits on an answer on the ticket; `blocked` on feedback; `ready` on a review of its PR.
 - **Why a job stopped.** Quote `intake.md`'s `## Questions` or `## Reason`, or the job's `reason` and `blocked.md`.
-- **Cost.** `cost_usd` from `job.sh show`, `unknown` when it is `null` or missing.
+- **Cost.** `cost_usd` from `job.sh show`, `unknown` when it is `null` or missing, and `$X+` (agents shared across the run not included) when `cost_partial` is true.
 - **Feedback for a blocked job.** Write the user's words, verbatim, to `<job-dir>/feedback-<n>.md` (`<n>` as in step 3), and tell them `/kc-factory:factory <KEY>` resumes it. Only a `blocked` job takes feedback; a `needs-info` job takes its answers on the ticket.
 - **Reject a parked job** (`needs-info` or `blocked`), only when the user asks for that key. `job.sh set <KEY> reason` with their reason as a JSON string, `job.sh advance <KEY> rejected`, post the `reject` comment (the Tracker precondition applies), and when the job has a `pr_url`, `gh pr close <pr_url>`.
 - **The dashboard.** `/factory-dashboard` opens the factory pane beside the chat.

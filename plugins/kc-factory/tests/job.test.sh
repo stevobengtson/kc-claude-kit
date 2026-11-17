@@ -116,8 +116,9 @@ job create ABC-1 "$work/config.json" >/dev/null
 job set ABC-1 risk '"high"'
 job set ABC-1 surfaces '["security","ui"]'
 job set ABC-1 cost_usd 1.5
+job set ABC-1 cost_partial true
 job set ABC-1 title '"Fix checkout total"'
-if [ "$(job show ABC-1 | jq -c '[.risk, .surfaces, .cost_usd, .title]')" = '["high",["security","ui"],1.5,"Fix checkout total"]' ]; then
+if [ "$(job show ABC-1 | jq -c '[.risk, .surfaces, .cost_usd, .cost_partial, .title]')" = '["high",["security","ui"],1.5,true,"Fix checkout total"]' ]; then
   pass "set: stores json values on whitelisted fields"
 else
   fail "set: stores json values on whitelisted fields" "$(job show ABC-1)"

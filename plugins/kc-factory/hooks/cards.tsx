@@ -36,8 +36,13 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(ms / HOUR_MS)}h ${Math.floor((ms % HOUR_MS) / MINUTE_MS)}m`
 }
 
-export function formatCost(costUsd: number | null | undefined): string {
-  return typeof costUsd === 'number' ? `$${costUsd.toFixed(2)}` : 'cost unavailable'
+// What a partial cost leaves out: run-wide agents (review prep, gates, shipping) no one job owns.
+export const PARTIAL_COST_NOTE = 'agents shared across the run not included'
+
+// A partial cost is a lower bound, so it reads "$X+".
+export function formatCost(costUsd: number | null | undefined, isPartial = false): string {
+  if (typeof costUsd !== 'number') return 'cost unavailable'
+  return `$${costUsd.toFixed(2)}${isPartial ? '+' : ''}`
 }
 
 export function jobCard({ Box, Text, Link }: Draw, job: JobCard, nowMs: number, width: number): RenderElement {
@@ -45,8 +50,9 @@ export function jobCard({ Box, Text, Link }: Draw, job: JobCard, nowMs: number, 
   const details = [
     job.risk === undefined ? null : `risk ${job.risk}`,
     job.surfaces === undefined || job.surfaces.length === 0 ? null : job.surfaces.join(', '),
-    formatCost(job.cost_usd),
+    formatCost(job.cost_usd, job.cost_partial === true),
   ].filter((detail): detail is string => detail !== null)
+  const isCostPartial = job.cost_partial === true && typeof job.cost_usd === 'number'
 
   return (
     <Box key={job.key} flexDirection="column" width={width} marginBottom={1}>
@@ -57,6 +63,7 @@ export function jobCard({ Box, Text, Link }: Draw, job: JobCard, nowMs: number, 
       </Text>
       {job.title !== undefined && <Text>{job.title}</Text>}
       <Text dimColor>{details.join(' · ')}</Text>
+      {isCostPartial && <Text dimColor>{`cost: ${PARTIAL_COST_NOTE}`}</Text>}
       {job.reason !== undefined && <Text dimColor>{job.reason}</Text>}
       {job.pr_url !== undefined && <Link href={job.pr_url} />}
     </Box>

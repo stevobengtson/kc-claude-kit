@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Gather the review for the branch.\nRun dir /runs/run-7\nWrite the SCOPE block."}}
+{"type":"assistant","message":{"id":"msg_010","model":"claude-sonnet-x","usage":{"input_tokens":500000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

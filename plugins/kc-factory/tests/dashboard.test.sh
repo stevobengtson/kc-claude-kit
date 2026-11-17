@@ -121,6 +121,29 @@ else
   fail "page: reports fetch errors" "no could-not-load message"
 fi
 
+# A partial cost reads "$X+" and says, as the cost's tooltip, what it leaves out.
+if command -v node >/dev/null 2>&1; then
+  costs=$(node -e '
+    const page = require("fs").readFileSync(process.argv[1], "utf8");
+    const note = page.match(/var PARTIAL_COST_NOTE = [^;]*;/)[0];
+    const fn = page.match(/function formatCost\(c, partial\) \{[\s\S]*?\n\}/)[0];
+    const formatCost = new Function(note + fn + "; return formatCost;")();
+    console.log([formatCost(1.5, true), formatCost(1.5, false), formatCost(1.5), formatCost(null, true)].join("|"));
+  ' "$plugin_dir/dashboard/index.html" 2>&1) || true
+  # shellcheck disable=SC2016 # literal dollar amounts
+  if [ "$costs" = '$1.50+|$1.50|$1.50|cost unavailable' ]; then
+    pass "page: a partial cost is \$X+"
+  else
+    fail "page: a partial cost is \$X+" "$costs"
+  fi
+fi
+if grep -q 'cost.title = PARTIAL_COST_NOTE' "$plugin_dir/dashboard/index.html" \
+  && grep -q 'var PARTIAL_COST_NOTE = "agents shared across the run not included"' "$plugin_dir/dashboard/index.html"; then
+  pass "page: a partial cost's tooltip says what it leaves out"
+else
+  fail "page: a partial cost's tooltip says what it leaves out" "no tooltip"
+fi
+
 # Data reaches the DOM through textContent only.
 if grep -q 'innerHTML' "$plugin_dir/dashboard/index.html"; then
   fail "page: no innerHTML" "dashboard/index.html uses innerHTML"
