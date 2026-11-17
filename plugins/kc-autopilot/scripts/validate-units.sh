@@ -70,11 +70,13 @@ readonly PROBLEMS='
                           then "\($unit.id) \($c.id) check.kind must be test, ui or data" else empty end),
                         (if ($c.check.how? // null | nonempty | not)
                           then "\($unit.id) \($c.id) check.how must be a non-empty string" else empty end)),
-                    (($p.routing.personas? // null) as $own
-                      | (if $own != null then $own.min else $qa.min end) as $min
-                      | (if $own != null then $own.max else $qa.max end) as $max
-                      | if ($min | type) == "number" and ($max | type) == "number" and (($personas | length) < $min or ($personas | length) > $max)
-                          then "\($unit.id) has \($personas | length) personas; \(if $own != null then "its routing" else "limits.qa_personas" end) allows \($min) to \($max)" else empty end),
+                    # A routing range on the unit wins over the config range.
+                    (([($p.routing.personas? // empty | {range: ., source: "its routing"}), {range: $qa, source: "limits.qa_personas"}] | first) as $limit
+                      | ($personas | length) as $count
+                      | (($limit.range.min | type) == "number" and ($limit.range.max | type) == "number") as $has_range
+                      | ($count < $limit.range.min or $count > $limit.range.max) as $out_of_range
+                      | select($has_range and $out_of_range)
+                      | "\($unit.id) has \($count) personas; \($limit.source) allows \($limit.range.min) to \($limit.range.max)"),
                     ($personas | to_entries[]
                       | select((.value | type) != "object" or ([.value.name, .value.goals, .value.behaviour] | all(nonempty) | not))
                       | "\($unit.id) persona \(.key + 1) needs non-empty name, goals and behaviour"),

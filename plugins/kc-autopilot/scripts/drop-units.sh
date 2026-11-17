@@ -15,9 +15,9 @@ fi
 plan=$1 dropped_file=$2
 shift 2
 
-ids=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+dropped_ids=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
 
-problems=$(jq -r --argjson ids "$ids" '
+problems=$(jq -r --argjson ids "$dropped_ids" '
   . as $plan
   | [ $ids[] | select(. as $id | $plan.units | map(.id) | index($id) | not) | "plan: unknown unit \(.)" ] as $unknown
   | if ($unknown | length) > 0 then $unknown[]
@@ -33,12 +33,12 @@ if [ -n "$problems" ]; then
   exit 1
 fi
 
-result=$(jq --argjson ids "$ids" '
+remaining_plan=$(jq --argjson ids "$dropped_ids" '
   .units |= map(select(.id as $id | $ids | index($id) | not))
   | ([.units[].covers[]] | unique) as $covered
   | .criteria |= map(select(.id as $id | $covered | index($id)))' "$plan")
 
 [ -f "$dropped_file" ] || echo '[]' > "$dropped_file"
 tmp=$(mktemp)
-jq --argjson ids "$ids" '. + [$ids[] | {id: ., reason: null}]' "$dropped_file" > "$tmp" && mv "$tmp" "$dropped_file"
-printf '%s\n' "$result"
+jq --argjson ids "$dropped_ids" '. + [$ids[] | {id: ., reason: null}]' "$dropped_file" > "$tmp" && mv "$tmp" "$dropped_file"
+printf '%s\n' "$remaining_plan"
