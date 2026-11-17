@@ -7,6 +7,7 @@
 #   - Read, Glob, Grep: only inside the repo, and never a secret-looking path
 #     (.env*, *.pem, *.key, id_*, .ssh/, .aws/, .netrc, *credentials*, *secret*,
 #     .git/). Glob and Grep patterns may not be absolute or use "..".
+#   - No path or pattern may start with "~".
 #   - Every other tool: denied.
 # Paths are made absolute against the hook's cwd, ".." is collapsed, and the real
 # path (symlinks followed) is what is compared. The repo is the git top level of
@@ -139,10 +140,17 @@ secret() {
   return 1
 }
 
+# no_home <path>: deny a path starting with "~". Claude Code expands it to a
+# home directory, which this guard would otherwise join onto the cwd.
+no_home() {
+  case "$1" in '~'*) deny "$tool of a ~ path is not allowed: $1" ;; esac
+}
+
 # readable <path>: deny unless it is inside the repo and not secret-looking.
 readable() {
   local abs resolved
   [ -n "$1" ] || deny "$tool needs a path"
+  no_home "$1"
   abs=$(lexical "$1" "$cwd")
   resolved=$(real "$abs") || deny "cannot resolve $1"
   inside_root "$resolved" || deny "$tool outside the repo is not allowed: $1"
@@ -163,6 +171,7 @@ case "$tool" in
   Write|Edit|MultiEdit)
     file=$(field .tool_input.file_path)
     [ -n "$file" ] || deny "$tool needs a file_path"
+    no_home "$file"
     resolved=$(real "$(lexical "$file" "$cwd")") || deny "cannot resolve $file"
     job_dir=${resolved%/*}
     key=${job_dir##*/}

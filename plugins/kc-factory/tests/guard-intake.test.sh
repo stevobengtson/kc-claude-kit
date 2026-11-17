@@ -58,6 +58,8 @@ check deny  ".. escape from the job dir"           "$(payload $I Write "$(path_i
 check deny  "write a shell rc file"                "$(payload $I Write "$(path_in file_path "$HOME/.bashrc")")"
 check deny  "job dir that is a symlink out"        "$(payload $I Write "$(path_in file_path "$repo/.factory/jobs/ABC-2/intake.md")")"
 check deny  "write with no path"                   "$(payload $I Write '{}')"
+# shellcheck disable=SC2088 # a literal ~, as the agent would send it
+check deny  "write under a ~ path"                 "$(payload $I Write "$(path_in file_path "~/.factory/jobs/ABC-1/intake.md")")"
 check deny  "MultiEdit elsewhere"                  "$(payload $I MultiEdit "$(path_in file_path "$repo/site/category.html")")"
 
 # Reads.
@@ -75,6 +77,10 @@ check deny  "read ~/.ssh"                          "$(payload $I Read "$(path_in
 check deny  "read via .. out of the repo"          "$(payload $I Read "$(path_in file_path "$repo/site/../../outside/notes.txt")")"
 check deny  "read via a symlink out of the repo"   "$(payload $I Read "$(path_in file_path "$repo/site/linked/notes.txt")")"
 check deny  "read with no path"                    "$(payload $I Read '{}')"
+# shellcheck disable=SC2088 # a literal ~, as the agent would send it
+check deny  "read a ~ path"                        "$(payload $I Read "$(path_in file_path "~/.zsh_history")")"
+check deny  "read a bare ~"                        "$(payload $I Read "$(path_in file_path "~")")"
+check deny  "read a ~user path"                    "$(payload $I Read "$(path_in file_path "~root/.ssh/id_rsa")")"
 
 # Glob and Grep.
 check allow "glob in the repo"                     "$(payload $I Glob '{"pattern":"**/*.html"}')"
@@ -83,6 +89,8 @@ check deny  "glob an absolute pattern"             "$(payload $I Glob '{"pattern
 check deny  "glob a home pattern"                  "$(payload $I Glob '{"pattern":"~/.ssh/*"}')"
 check deny  "glob a .. pattern"                    "$(payload $I Glob '{"pattern":"../**"}')"
 check deny  "glob outside the repo"                "$(payload $I Glob "$(jq -cn --arg p "$tmp/outside" '{pattern:"*",path:$p}')")"
+check deny  "glob under a ~ path"                  "$(payload $I Glob '{"pattern":"*","path":"~/.ssh"}')"
+check deny  "grep under a ~ path"                  "$(payload $I Grep '{"pattern":"x","path":"~/.claude"}')"
 check allow "grep in the repo"                     "$(payload $I Grep '{"pattern":"Mugs"}')"
 check deny  "grep .env"                            "$(payload $I Grep "$(jq -cn --arg p "$repo/.env" '{pattern:"KEY",path:$p}')")"
 check deny  "grep outside the repo"                "$(payload $I Grep "$(jq -cn --arg p "$tmp/outside" '{pattern:"x",path:$p}')")"
