@@ -12,7 +12,7 @@ Rules for the whole skill:
 
 - **Job state goes through `job.sh` only.** Never edit a `job.json` or `index.json` by hand. Every other file named below is yours to write.
 - **The tracker hears only what happened.** Post a comment or move a status only after the step it reports is done, only on keys the user named, and only when the comment's kind is in the config's `tracker.comment_on`. Post a comment's text exactly as `ticket.sh comment` printed it: its first line is the marker that tells factory comments from human replies.
-- **Never post twice.** Before each comment or status move, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh logged <job-dir> <kind>`: exit 0 means it was already made since the job entered its stage, so skip it.
+- **Never post twice.** Before each comment or status move, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh logged <job-dir> <kind>`: exit 0 means it was already made since the job entered its stage (the `accept` comment: ever, for this job), so skip it.
 - **Log every tracker write** to `<job-dir>/tracker.log`, one line each, tab-separated: UTC time, kind (`comment:<kind>` or `transition:<status>`), and the tool's response id (the comment id, or the transition id you sent), or `failed: <one-line error>`:
   ```bash
   printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<kind>" "<id or failed: …>" >> "<job-dir>/tracker.log"
@@ -51,7 +51,7 @@ mkdir -p .factory && bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-config.sh .claude/f
 
 ## 3. Each key: create or resume its job
 
-For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh show <KEY>`. If it exits 1 (no job yet), `job.sh create <KEY> .factory/config.json` prints the new job's dir and `show` again; an existing job's dir is `<repo>/.factory/jobs/<KEY>`. Note the dir and act on the `stage`. A job found in `ready`, `blocked`, `needs-info`, `rejected` or `queued` first gets any tracker write its stage owes and that `ticket.sh logged` does not show (a session that died between the move and the post): `ready` the `in_review` move and the `ready` comment, `blocked` the `blocked` comment, `needs-info` and `rejected` their comments, `queued` the `accept` comment and the `in_progress` move.
+For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh show <KEY>`. If it exits 1 (no job yet), `job.sh create <KEY> .factory/config.json` prints the new job's dir and `show` again; an existing job's dir is `<repo>/.factory/jobs/<KEY>`. Note the dir and act on the `stage`. A job found in `ready`, `blocked`, `needs-info`, `rejected` or `queued` first gets any tracker write its stage owes and that `ticket.sh logged` does not show (a session that died between the move and the post): `ready` the `in_review` move and the `ready` comment, `blocked` the `blocked` comment, `needs-info` and `rejected` their comments, `queued` the `accept` comment and the `in_progress` move (neither for a job whose history has `blocked`: it was accepted, and its ticket moved, before it first blocked).
 
 | stage | do |
 |---|---|

@@ -195,6 +195,13 @@ logged() { bash "$script" logged "$logjob" "$1" >/dev/null 2>&1 && echo 0 || ech
 check "logged: a write in this stage counts (same second included)" "$([ "$(logged "transition:In Review")" = 0 ] && echo 0 || echo 1)" "$(logged "transition:In Review")"
 check "logged: a write before this stage does not count" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
 check "logged: a failed write does not count" "$([ "$(logged comment:blocked)" = 1 ] && echo 0 || echo 1)" "$(logged comment:blocked)"
+# A requeued job (blocked, then queued again) was accepted once already: the
+# accept comment counts from any earlier stage, every other kind only from this one.
+echo '{"key":"ABC-5","stage":"queued","history":[{"stage":"queued","at":"2026-11-16T09:00:00Z"},{"stage":"delivering","at":"2026-11-16T10:00:00Z"},{"stage":"blocked","at":"2026-11-16T11:00:00Z"},{"stage":"queued","at":"2026-11-16T13:00:00Z"}]}' > "$logjob/job.json"
+check "logged: an accept comment from an earlier stage counts" "$([ "$(logged comment:accept)" = 0 ] && echo 0 || echo 1)" "$(logged comment:accept)"
+check "logged: other kinds from an earlier stage still do not count" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+printf '%s\t%s\t%s\n' 2026-11-16T09:00:00Z comment:accept "failed: 500" > "$logjob/tracker.log"
+check "logged: a failed accept comment does not count" "$([ "$(logged comment:accept)" = 1 ] && echo 0 || echo 1)" "$(logged comment:accept)"
 rm "$logjob/tracker.log"
 check "logged: no tracker.log means nothing logged" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
 rm "$logjob/job.json"

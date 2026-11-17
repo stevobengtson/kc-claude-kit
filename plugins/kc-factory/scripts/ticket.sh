@@ -11,7 +11,8 @@
 #   ticket.sh logged <job-dir> <kind>                 is a tracker write of <kind>
 #                                                     (comment:<k> or transition:<status>)
 #                                                     in <job-dir>/tracker.log, not failed,
-#                                                     at or after the job entered its stage?
+#                                                     at or after the job entered its stage
+#                                                     (comment:accept: at any time)?
 # Exit: 0 ok (logged: it is); 1 nothing to report (new-replies), not logged
 # (logged), or a missing input
 # ("ticket: <problem>" on stderr); 2 jq missing or a usage error; 3 no
@@ -226,6 +227,9 @@ cmd_logged() {
   since=$(jq -r '(.history // [] | last | .at) // .updated_at // empty' "$dir/job.json") \
     || die "$dir/job.json is not valid JSON"
   [ -n "$since" ] || die "$dir/job.json has no stage time"
+  # The accept comment is owed once per job, not once per stage: a job that
+  # was blocked and queued again was accepted already.
+  [ "$kind" != comment:accept ] || since=""
   [ -f "$dir/tracker.log" ] || return 1
   awk -F '\t' -v kind="$kind" -v since="$since" '
     $2 == kind && $1 >= since && $3 !~ /^failed:/ { found = 1 }
