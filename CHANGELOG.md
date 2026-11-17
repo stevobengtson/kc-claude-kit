@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed (any plugin can find its sibling)
 
-- `kc-autopilot` 0.3.3: `scripts/plugin-root.sh` finds a sibling plugin for any calling plugin, not only autopilot's own, so `kc-factory` locates `kc-autopilot` the way autopilot locates `kc-gates`. The class: a lookup written for its first caller; other cases are a config reader that assumes one app's folder, a path helper hard-wired to one package name. Held by `plugins/kc-autopilot/tests/plugin-root.test.sh`.
+- `kc-autopilot` 0.3.3: `scripts/plugin-root.sh` finds a sibling plugin whichever plugin calls it, not only autopilot's own lookups; `kc-factory` ships that file as a symlink (the kit's pattern for sharing a script across plugins), so it locates `kc-autopilot` the way autopilot locates `kc-gates`. The class: a lookup written for its first caller; other cases are a config reader that assumes one app's folder, a path helper hard-wired to one package name. Held by `plugins/kc-autopilot/tests/plugin-root.test.sh`.
 
 ### Changed (eval runs can write files)
 
