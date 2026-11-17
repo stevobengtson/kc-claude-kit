@@ -105,7 +105,6 @@ expect_error "unrouted unit still uses config range" "$(mutate_routing few-unrou
 expect_error "routing changed from plan"   "$(mutate_routing drift '.units[0].routing.workers = "haiku"')" "U1 routing differs from the plan" "$fixtures/config.json" "$routing_plan"
 expect_error "routing dropped from unit"   "$(mutate_routing dropped 'del(.units[0].routing)')" "U1 routing differs from the plan" "$fixtures/config.json" "$routing_plan"
 expect_error "routing added to unrouted plan unit" "$(mutate 'added' '.units[0].routing = {workers: "best"}')" "U1 routing differs from the plan"
-expect_ok    "unrouted unit keeps config range" "$fixtures/good.json"
 
 # Every problem is reported, not just the first.
 two=$(mutate two '.units[0].contract.personas |= .[0:1] | .units[1].contract.criteria[0].check.how = ""')

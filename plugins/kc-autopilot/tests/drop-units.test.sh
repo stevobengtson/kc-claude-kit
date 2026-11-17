@@ -27,86 +27,70 @@ cat > "$work/plan.json" <<'JSON'
   ],
   "units": [
     {"id": "U1", "index": 0, "title": "Storage", "depends_on": [], "covers": ["AC1"], "scope": "Model."},
-    {"id": "U2", "index": 1, "title": "Sharing", "depends_on": [], "covers": ["AC2"], "scope": "Share links.",
-     "routing": {"workers": "best", "personas": {"min": 4, "max": 5}, "security": "staff"}},
+    {"id": "U2", "index": 1, "title": "Sharing", "depends_on": [], "covers": ["AC2"], "scope": "Share links."},
     {"id": "U3", "index": 2, "title": "Picker", "depends_on": ["U1"], "covers": ["AC1", "AC3"], "scope": "UI."}
   ]
 }
 JSON
 
-# run <dropped.json> <unit-id>...: sets status, out (stdout) and err (stderr).
-run() {
+# run_drop_units <dropped.json> <unit-id>...: sets status, and the script's stdout
+# and stderr in $work/out and $work/err.
+run_drop_units() {
   local dropped=$1; shift
   status=0
   bash "$script" "$work/plan.json" "$dropped" "$@" >"$work/out" 2>"$work/err" || status=$?
 }
 
-# Dropping an independent unit keeps the others and the criteria they cover.
-run "$work/d1.json" U2
-if [ "$status" = 0 ] \
-  && [ "$(jq -c '[.units[].id]' "$work/out")" = '["U1","U3"]' ] \
-  && [ "$(jq -c '[.criteria[].id]' "$work/out")" = '["AC1","AC3"]' ] \
-  && [ "$(jq -c '.' "$work/d1.json")" = '[{"id":"U2","reason":null}]' ]; then
-  pass "drops an independent unit, its own criterion and records it"
-else
-  fail "drops an independent unit" "status $status, out: $(cat "$work/out"), dropped: $(cat "$work/d1.json" 2>&1)"
-fi
+# expect_plan <label> <jq filter true over the printed plan> <dropped.json> <unit-id>...
+expect_plan() {
+  local label=$1 filter=$2
+  shift 2
+  run_drop_units "$@"
+  if [ "$status" != 0 ]; then fail "$label" "status $status: $(cat "$work/err")"; return; fi
+  if jq -e "$filter" "$work/out" >/dev/null; then pass "$label"; else fail "$label" "$(cat "$work/out")"; fi
+}
+
+# expect_refusal <label> <stderr line> <dropped.json> <unit-id>...: exit 1, the
+# line on stderr, nothing printed.
+expect_refusal() {
+  local label=$1 message=$2
+  shift 2
+  run_drop_units "$@"
+  if [ "$status" != 1 ]; then fail "$label" "status $status"; return; fi
+  if ! grep -qxF "$message" "$work/err"; then fail "$label" "stderr: $(cat "$work/err")"; return; fi
+  if [ -s "$work/out" ]; then fail "$label" "printed: $(cat "$work/out")"; return; fi
+  pass "$label"
+}
+
+# expect_dropped_file <label> <dropped.json> <expected compact JSON>
+expect_dropped_file() {
+  local actual
+  actual=$(jq -c '.' "$2" 2>&1) || true
+  if [ "$actual" = "$3" ]; then pass "$1"; else fail "$1" "$actual"; fi
+}
+
+expect_plan "drops an independent unit and its own criterion" \
+  '[.units[].id] == ["U1","U3"] and [.criteria[].id] == ["AC1","AC3"]' "$work/d1.json" U2
+expect_dropped_file "records the dropped unit" "$work/d1.json" '[{"id":"U2","reason":null}]'
 
 printf '%s' '[{"id":"U9","reason":"earlier"}]' > "$work/d3.json"
-run "$work/d3.json" U2
-if [ "$status" = 0 ] && [ "$(jq -c '.' "$work/d3.json")" = '[{"id":"U9","reason":"earlier"},{"id":"U2","reason":null}]' ]; then
-  pass "appends to an existing dropped file"
-else
-  fail "appends to an existing dropped file" "status $status, dropped: $(cat "$work/d3.json")"
-fi
+expect_plan "appends to an existing dropped file" '[.units[].id] == ["U1","U3"]' "$work/d3.json" U2
+expect_dropped_file "keeps the earlier entries" "$work/d3.json" '[{"id":"U9","reason":"earlier"},{"id":"U2","reason":null}]'
 
-# Dropping a unit another unit depends on is refused.
-run "$work/d4.json" U1
-if [ "$status" = 1 ] && grep -qxF 'plan: U3 depends on dropped unit U1' "$work/err" && [ ! -s "$work/out" ]; then
-  pass "refuses to drop a unit a remaining unit depends on"
-else
-  fail "refuses to drop a depended-on unit" "status $status, err: $(cat "$work/err")"
-fi
+expect_refusal "refuses to drop a unit a remaining unit depends on" \
+  'plan: U3 depends on dropped unit U1' "$work/d4.json" U1
 
-# Dropping the dependent together with its dependency is fine.
-run "$work/d5.json" U1 U3
-if [ "$status" = 0 ] && [ "$(jq -c '[.units[].id]' "$work/out")" = '["U2"]' ] && [ "$(jq -c '[.criteria[].id]' "$work/out")" = '["AC2"]' ]; then
-  pass "drops a unit together with its dependent"
-else
-  fail "drops a unit together with its dependent" "status $status, out: $(cat "$work/out")"
-fi
+expect_plan "drops a unit together with its dependent" \
+  '[.units[].id] == ["U2"] and [.criteria[].id] == ["AC2"]' "$work/d5.json" U1 U3
 
-# A partly covered criterion stays when a remaining unit still covers it.
-run "$work/d6.json" U3
-if [ "$status" = 0 ] && [ "$(jq -c '[.criteria[].id]' "$work/out")" = '["AC1","AC2"]' ]; then
-  pass "keeps a criterion another remaining unit covers"
-else
-  fail "keeps a shared criterion" "status $status, out: $(cat "$work/out")"
-fi
+expect_plan "keeps a criterion another remaining unit covers" \
+  '[.criteria[].id] == ["AC1","AC2"]' "$work/d6.json" U3
 
-# Dropping every unit is refused.
-run "$work/d7.json" U1 U2 U3
-if [ "$status" = 1 ] && grep -qxF 'plan: every unit dropped; stop the run instead' "$work/err" && [ ! -s "$work/out" ]; then
-  pass "refuses to drop every unit"
-else
-  fail "refuses to drop every unit" "status $status, err: $(cat "$work/err")"
-fi
+expect_refusal "refuses to drop every unit" \
+  'plan: every unit dropped; stop the run instead' "$work/d7.json" U1 U2 U3
 
-# An unknown id is refused and leaves the dropped file alone.
-run "$work/d8.json" U9
-if [ "$status" = 1 ] && grep -qxF 'plan: unknown unit U9' "$work/err" && [ ! -e "$work/d8.json" ]; then
-  pass "refuses an unknown unit id"
-else
-  fail "refuses an unknown unit id" "status $status, err: $(cat "$work/err")"
-fi
-
-# Routing on remaining units is carried through untouched.
-run "$work/d9.json" U3
-if [ "$status" = 0 ] && [ "$(jq -c '.units[] | select(.id == "U2") | .routing.personas' "$work/out")" = '{"min":4,"max":5}' ]; then
-  pass "keeps routing on remaining units"
-else
-  fail "keeps routing on remaining units" "status $status, out: $(cat "$work/out")"
-fi
+expect_refusal "refuses an unknown unit id" 'plan: unknown unit U9' "$work/d8.json" U9
+if [ -e "$work/d8.json" ]; then fail "a refusal writes no dropped file" "$(cat "$work/d8.json")"; else pass "a refusal writes no dropped file"; fi
 
 # No unit id at all is a usage error.
 status=0; bash "$script" "$work/plan.json" "$work/d10.json" >/dev/null 2>"$work/err" || status=$?

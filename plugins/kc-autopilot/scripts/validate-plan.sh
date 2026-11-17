@@ -46,7 +46,7 @@ parsed=$(printf '%s\n' "$records" | jq -R -s '
   def routing: split(";") | map(trim | select(. != "") | capture("^(?<k>[^=]*)=(?<v>.*)$") // {k: ., v: ""})
     | map({key: (.k | trim), value: (.v | trim | if test("^[0-9]+-[0-9]+$") then (split("-") | {min: (.[0] | tonumber), max: (.[1] | tonumber)}) else . end)})
     | from_entries;
-  def list: if . == "" or (ascii_downcase == "none") then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end;
+  def list: if . == "" or (ascii_downcase == "none") then [] else split(",") | map(trim | select(. != "")) end;
   split("\n") | map(select(. != "") | split("\t")) as $r
   | ($r | map(select(.[0] == "unit")) | to_entries | map({id: .value[1], index: .key, title: .value[2]})) as $units
   | {
@@ -67,6 +67,11 @@ parsed=$(printf '%s\n' "$records" | jq -R -s '
 # Ancestors are a bounded fixed point, so a dependency cycle cannot hang jq.
 problems=$(printf '%s' "$parsed" | jq -r '
   def ancestors($m; $id): reduce range(0; $m | length) as $_ ($m[$id] // []; (. + [.[] | ($m[.] // [])[]]) | unique);
+  # What a Routing line may hold (see references/plan-template.md).
+  def known_routing_key: . as $k | ["workers", "personas", "security"] | index($k) != null;
+  def model_name: type == "string" and ((. as $m | ["haiku", "sonnet", "opus", "best"] | index($m) != null) or test("^claude-[a-z0-9-]+$"));
+  def persona_range: type == "object" and .min >= 1 and .min <= .max;
+  def security_choice: . == "workers" or . == "staff";
   . as $p
   | ($p.units | map({key: .id, value: .depends_on}) | from_entries) as $deps
   | ($p.criteria | map(.id)) as $ids
@@ -84,10 +89,10 @@ problems=$(printf '%s' "$parsed" | jq -r '
         | [range(0; .depends_on | length) as $i | range($i + 1; .depends_on | length) as $j | [.depends_on[$i], .depends_on[$j]]
            | select(([.[0]] - ancestors($deps; .[1]) | length) > 0 and ([.[1]] - ancestors($deps; .[0]) | length) > 0)][0]
         | select(. != null) | "\($u.id) depends on independent units \(.[0]) and \(.[1]); make one depend on the other"),
-      ($p.units[] | . as $u | (.routing // {}) | keys_unsorted[] | select(. as $k | ["workers", "personas", "security"] | index($k) | not) | "\($u.id) routing has unknown key \(.)"),
-      ($p.units[] | . as $u | (.routing // {}) | select(has("workers")) | .workers | select((type != "string") or ((. as $w | ["haiku", "sonnet", "opus", "best"] | index($w) | not) and (test("^claude-[a-z0-9-]+$") | not))) | "\($u.id) routing workers must be haiku, sonnet, opus, best or a claude-* model id"),
-      ($p.units[] | . as $u | (.routing // {}) | select(has("personas")) | .personas | select((type != "object") or (.min < 1) or (.min > .max)) | "\($u.id) routing personas must be <min>-<max> with 1 <= min <= max"),
-      ($p.units[] | . as $u | (.routing // {}) | select(has("security")) | .security | select(. != "workers" and . != "staff") | "\($u.id) routing security must be workers or staff"),
+      ($p.units[] | . as $u | (.routing // {}) | keys_unsorted[] | select(known_routing_key | not) | "\($u.id) routing has unknown key \(.)"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("workers")) | .workers | select(model_name | not) | "\($u.id) routing workers must be haiku, sonnet, opus, best or a claude-* model id"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("personas")) | .personas | select(persona_range | not) | "\($u.id) routing personas must be <min>-<max> with 1 <= min <= max"),
+      ($p.units[] | . as $u | (.routing // {}) | select(has("security")) | .security | select(security_choice | not) | "\($u.id) routing security must be workers or staff"),
       ($p.units[] | select(.covers | length == 0) | "\(.id) has no - Covers: line"),
       ($ids[] | select(. as $c | [$p.units[].covers[]] | index($c) | not) | "\(.) is not covered by any unit")
     ] | .[]')
