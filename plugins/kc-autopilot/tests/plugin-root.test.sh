@@ -48,5 +48,34 @@ jq -n --arg ap "$tmp/cache2/mkt/kc-autopilot/0.1.0" --arg cr "$tmp/cache2/mkt/kc
 CONFIG_DIR=$tmp/config expect "install record: this marketplace's user-scope entry" 0 "$tmp/cache2/mkt/kc-gates/2.0.0" "$tmp/cache2/mkt/kc-autopilot/0.1.0"
 CONFIG_DIR=$tmp/config expect "install record without kc-autopilot: falls back to the layout" 0 "$tmp/side/kc-gates" "$tmp/side/kc-autopilot"
 
+# Any plugin can ask: the marketplace is the one whose entry installed the caller's root.
+plugin "$tmp/cache2/mkt/kc-factory/0.1.0" kc-factory
+plugin "$tmp/cache2/mkt/kc-autopilot/0.9.0" kc-autopilot
+jq --arg f "$tmp/cache2/mkt/kc-factory/0.1.0" '.plugins["kc-factory@mkt"] = [{scope: "user", installPath: $f}]' \
+  "$tmp/config/plugins/installed_plugins.json" > "$tmp/record" && mv "$tmp/record" "$tmp/config/plugins/installed_plugins.json"
+status=0
+out=$(CLAUDE_CONFIG_DIR=$tmp/config bash "$script" "$tmp/cache2/mkt/kc-factory/0.1.0" kc-autopilot 2>/dev/null) || status=$?
+if [ "$status" = 0 ] && [ "$out" = "$tmp/cache2/mkt/kc-autopilot/0.1.0" ]; then pass "install record: another plugin finds kc-autopilot"
+else fail "install record: another plugin finds kc-autopilot" "expected 0 '$tmp/cache2/mkt/kc-autopilot/0.1.0', got $status '$out'"; fi
+
+# The entry for the current project wins over the user-scope one.
+plugin "$tmp/cache2/mkt/kc-gates/3.0.0" kc-gates
+mkdir -p "$tmp/proj"
+jq --arg p "$tmp/proj" --arg g "$tmp/cache2/mkt/kc-gates/3.0.0" '.plugins["kc-gates@mkt"] += [{scope: "project", projectPath: $p, installPath: $g}]' \
+  "$tmp/config/plugins/installed_plugins.json" > "$tmp/record" && mv "$tmp/record" "$tmp/config/plugins/installed_plugins.json"
+status=0
+out=$(cd "$tmp/proj" && CLAUDE_CONFIG_DIR=$tmp/config bash "$script" "$tmp/cache2/mkt/kc-autopilot/0.1.0" kc-gates 2>/dev/null) || status=$?
+if [ "$status" = 0 ] && [ "$out" = "$tmp/cache2/mkt/kc-gates/3.0.0" ]; then pass "install record: the current project's entry wins"
+else fail "install record: the current project's entry wins" "got $status '$out'"; fi
+
+# A wrong argument count is a usage error.
+for args in "one" "one two three"; do
+  status=0
+  # shellcheck disable=SC2086 # the words are the arguments
+  err=$(bash "$script" $args 2>&1 >/dev/null) || status=$?
+  if [ "$status" = 2 ] && [ "$err" = "usage: plugin-root.sh <caller-root> <plugin-name>" ]; then pass "usage error with: $args"
+  else fail "usage error with: $args" "got $status '$err'"; fi
+done
+
 echo "plugin-root: $passes passed, $failures failed"
 [ "$failures" = 0 ]

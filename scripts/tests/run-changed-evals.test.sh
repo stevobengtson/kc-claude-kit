@@ -157,6 +157,11 @@ if grep -qE -- '^plugin eval plugins/shop --case totals --runs 1 --ablation with
 else
   fail "the run targets the plugin, one run of that case, with the baseline arm (got: $(cat "$calls"))"
 fi
+if grep -qE -- '--allow-tools Bash Agent Write$' "$calls"; then
+  pass "the run grants Write, so an agent the case dispatches can write its output file"
+else
+  fail "the run grants Write, so an agent the case dispatches can write its output file (got: $(cat "$calls"))"
+fi
 expect_record "the record says it passed" plugins/shop/evals/totals/proof.json .verdict ok
 expect_record "the record names the commit" plugins/shop/evals/totals/proof.json .commit "$(git -C "$repo" rev-parse HEAD)"
 expect_record "the record keeps each grader's result" plugins/shop/evals/totals/proof.json '.runs.without[0].graders[0].passed' false
@@ -360,6 +365,7 @@ run_script
 expect_status "a case that fails with the rule edits taken out passes" 0
 expect_output "it says all three" "fails without it, and fails with this change's rule edits taken out"
 expect_calls "two eval runs" 2
+if [ "$(grep -c -- '--allow-tools Bash Agent Write$' "$calls")" = 2 ]; then pass "the third run grants Write too"; else fail "the third run grants Write too (got: $(cat "$calls"))"; fi
 if [ "$(cat "$calls.rule-seen")" = "A total includes tax." ]; then pass "the third run reads the base's rule text"; else fail "the third run reads the base's rule text (saw: $(cat "$calls.rule-seen"))"; fi
 if grep -q "No such file" "$calls.extra-seen"; then pass "a rule file the change adds is gone in the third run"; else fail "a rule file the change adds is gone in the third run (saw: $(cat "$calls.extra-seen"))"; fi
 if [ "$(cat "$repo/plugins/shop/skills/checkout/SKILL.md")" = "A total includes tax and shipping." ]; then pass "the checkout keeps the change"; else fail "the checkout keeps the change"; fi
@@ -400,6 +406,29 @@ run_script
 expect_status "a guard case needs no third run" 0
 expect_calls "one eval run for a guard" 1
 expect_output "it says what a guard proves" "a guard case"
+reset_tree
+
+# A run is granted only the gated tools (Bash, Agent, Write) its case allows: a shell the case
+# never uses makes the eval refuse to run on a machine with no sandbox to confine it.
+create_branch narrow-tools
+write_repo_file plugins/shop/evals/totals/prompt.md '---\nplugins: ["../.."]\nallowed_tools: [Read, Grep, Agent, Write]\n---\nReview it.\n'
+commit_change "a case that needs no shell"
+write_result totals true false
+run_script
+if grep -qE -- '--allow-tools Agent Write$' "$calls" && ! grep -q 'Bash' "$calls"; then
+  pass "a case that allows no shell is granted only Agent and Write"
+else
+  fail "a case that allows no shell is granted only Agent and Write (got: $(cat "$calls"))"
+fi
+reset_tree
+write_repo_file plugins/shop/evals/totals/prompt.md '---\nplugins: ["../.."]\nallowed_tools: [Read, Grep]\n---\nReview it.\n'
+commit_change "a case that needs no gated tool"
+run_script
+if grep -q 'plugin eval' "$calls" && ! grep -q -- '--allow-tools' "$calls"; then
+  pass "a case that allows no gated tool is granted none"
+else
+  fail "a case that allows no gated tool is granted none (got: $(cat "$calls"))"
+fi
 reset_tree
 
 status=0

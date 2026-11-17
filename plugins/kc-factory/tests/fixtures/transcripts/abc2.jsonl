@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Intake for .factory/jobs/ABC-2/"}}
+{"type":"assistant","message":{"id":"msg_004","model":"claude-sonnet-x","usage":{"input_tokens":2000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

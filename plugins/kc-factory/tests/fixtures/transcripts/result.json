@@ -1,0 +1,5 @@
+{"units": [
+  {"id": "U1", "status": "done", "reason": "", "pr_url": "https://example.com/shop/pull/1", "branch": "abc-1-stock-level"},
+  {"id": "U2", "status": "blocked:qa", "reason": "checkout total wrong", "pr_url": ""},
+  {"id": "U3", "status": "done", "reason": "", "pr_url": "https://example.com/shop/pull/3"}
+]}

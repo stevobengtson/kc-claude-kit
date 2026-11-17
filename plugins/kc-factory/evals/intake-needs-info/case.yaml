@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: intake-needs-info
+description: A ticket that only says to make checkout better, with nothing about what is wrong or for whom, gets NEEDS-INFO and numbered questions for its author.
+tags: [factory, intake, positive]
+context:
+  scaffold_script: setup.sh

@@ -1,0 +1,1 @@
+../../kc-autopilot/scripts/plugin-root.sh

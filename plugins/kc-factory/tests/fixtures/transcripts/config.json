@@ -1,0 +1,1 @@
+{"prices_usd_per_mtok": {"claude-sonnet-x": {"input": 3, "output": 15, "cache_write": 3.75, "cache_read": 0.3}, "claude-opus-x": {"input": 15, "output": 75, "cache_write": 18.75, "cache_read": 1.5}}}

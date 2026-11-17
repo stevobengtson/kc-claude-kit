@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kc-factory</title>
+<style>
+  :root {
+    --bg: #fafaf8; --card: #ffffff; --text: #1c1c1a; --dim: #6b6b66; --line: #dcdcd6;
+    --ready: #2f7a3a; --blocked: #a3141c; --warn: #7a4a00; --link: #1a5fb4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --card: #1f1f1d; --text: #ecece8; --dim: #9a9a94; --line: #34342f;
+      --ready: #6cc07a; --blocked: #ff7b82; --warn: #e0a84a; --link: #7fb2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  #status { color: var(--dim); font-size: 12px; margin-bottom: 12px; }
+  #cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; cursor: pointer; overflow-wrap: anywhere; }
+  .card:focus-visible { outline: 2px solid var(--link); }
+  .head { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+  .key { font-weight: 700; }
+  .stage-ready { color: var(--ready); }
+  .stage-blocked, .stage-rejected { color: var(--blocked); }
+  .stage-needs-info { color: var(--warn); }
+  .dim { color: var(--dim); }
+  a { color: var(--link); }
+  .files { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; cursor: default; }
+  .file h3 { font-size: 12px; margin: 8px 0 2px; color: var(--dim); }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  .summary { border-left: 3px solid var(--line); padding-left: 8px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<h1>kc-factory</h1>
+<div id="status">loading…</div>
+<div id="cards"></div>
+<script>
+"use strict";
+// Every job field and file text comes from tracker text or agent output, so it
+// reaches the page through textContent only, never as markup.
+var RUNNING = ["intake", "queued", "delivering"];
+var FIXED_FILES = ["intake.md", "routing.json", "tracker.log", "blocked.md", "ticket.md"];
+var MAX_FEEDBACK = 20;  // feedback-1.md .. feedback-20.md are probed
+var SECOND_MS = 1000;
+var SECONDS_PER_MINUTE = 60;
+var MINUTES_PER_HOUR = 60;
+var REFRESH_MS = 5000;
+var open = {};      // key -> true while its file list is expanded
+var cache = {};     // key -> [{name, text}] fetched when opened
+
+function makeElement(tag, cls, text) {
+  var node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// A PR URL becomes a link only when it is an https:// string; anything else
+// (javascript:, http:, a non-string from agent output) is shown as text.
+function safeUrl(url) {
+  return typeof url === "string" && url.indexOf("https://") === 0 ? url : null;
+}
+
+function formatElapsed(ms) {
+  var seconds = Math.floor(ms / SECOND_MS);
+  var minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  var hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  if (seconds < SECONDS_PER_MINUTE) return seconds + "s";
+  if (minutes < MINUTES_PER_HOUR) return minutes + "m";
+  return hours + "h " + (minutes % MINUTES_PER_HOUR) + "m";
+}
+
+function getElapsedMs(job) {
+  var start = Date.parse(job.created_at);
+  var end = RUNNING.indexOf(job.stage) >= 0 ? Date.now() : Date.parse(job.updated_at);
+  if (isNaN(start) || isNaN(end)) return null;
+  return Math.max(0, end - start);
+}
+
+// What a partial cost leaves out: run-wide agents (review prep, gates, shipping) no one job owns.
+var PARTIAL_COST_NOTE = "agents shared across the run not included";
+
+// A partial cost is a lower bound, so it reads "$X+".
+function formatCost(c, partial) {
+  if (typeof c !== "number") return "cost unavailable";
+  return "$" + c.toFixed(2) + (partial === true ? "+" : "");
+}
+
+// The text of a file's "## Summary" section, or null when it has none.
+function getFileSummary(text) {
+  var lines = text.split("\n"), out = [], inside = false;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^##\s+Summary\s*$/i.test(lines[i])) { inside = true; continue; }
+    if (inside && /^#{1,2}\s/.test(lines[i])) break;
+    if (inside) out.push(lines[i]);
+  }
+  var summary = out.join("\n").trim();
+  return summary === "" ? null : summary;
+}
+
+// Resolves to {text} on 200, {missing} on 404, {error} on anything else.
+function fetchText(path) {
+  return fetch(path, { cache: "no-store" }).then(function (r) {
+    if (r.ok) return r.text().then(function (t) { return { text: t }; });
+    return r.status === 404 ? { missing: true } : { error: "HTTP " + r.status };
+  }).catch(function (e) { return { error: e.message }; });
+}
+
+function loadFiles(key) {
+  var base = "jobs/" + encodeURIComponent(key) + "/";
+  var found = [], failures = [];
+  var fixed = FIXED_FILES.map(function (name) {
+    return fetchText(base + name).then(function (r) {
+      if (r.text !== undefined) found.push({ name: name, text: r.text });
+      else if (r.error) failures.push(name + ": could not load (" + r.error + ")");
+    });
+  });
+  // Directory listings are not available to a static page: probe feedback-1.md
+  // upward until the first miss.
+  var feedback = [];
+  function probeFeedbackFile(n) {
+    if (n > MAX_FEEDBACK) return Promise.resolve();
+    var name = "feedback-" + n + ".md";
+    return fetchText(base + name).then(function (r) {
+      if (r.error) failures.push(name + ": could not load (" + r.error + ")");
+      if (r.text === undefined) return;
+      feedback.push({ name: name, text: r.text });
+      return probeFeedbackFile(n + 1);
+    });
+  }
+  return Promise.all(fixed.concat([probeFeedbackFile(1)])).then(function () {
+    found.sort(function (a, b) { return FIXED_FILES.indexOf(a.name) - FIXED_FILES.indexOf(b.name); });
+    var all = found.concat(feedback);
+    all.failures = failures;
+    return all;
+  });
+}
+
+function drawFiles(key, files) {
+  var box = makeElement("div", "files");
+  (files.failures || []).forEach(function (m) { box.appendChild(makeElement("div", "stage-blocked", m)); });
+  var hasNoFiles = files.length === 0;
+  var hasNoFailures = (files.failures || []).length === 0;
+  if (hasNoFiles && hasNoFailures) box.appendChild(makeElement("div", "dim", "no files yet"));
+  files.forEach(function (f) {
+    var wrap = makeElement("div", "file");
+    wrap.appendChild(makeElement("h3", null, f.name));
+    var summary = getFileSummary(f.text);
+    if (summary !== null) wrap.appendChild(makeElement("pre", "summary", summary));
+    wrap.appendChild(makeElement("pre", null, f.text));
+    box.appendChild(wrap);
+  });
+  return box;
+}
+
+function drawCard(job) {
+  var card = makeElement("div", "card");
+  card.tabIndex = 0;
+  card.dataset.key = job.key;
+  card.setAttribute("role", "button");
+  var head = makeElement("div", "head");
+  head.appendChild(makeElement("span", "key", job.key));
+  head.appendChild(makeElement("span", "stage-" + String(job.stage).replace(/[^a-z-]/g, ""), job.stage));
+  var ms = getElapsedMs(job);
+  if (ms !== null) head.appendChild(makeElement("span", "dim", formatElapsed(ms)));
+  card.appendChild(head);
+  if (job.title !== undefined) card.appendChild(makeElement("div", null, job.title));
+  var details = [];
+  if (job.risk !== undefined) details.push("risk " + job.risk);
+  var surfaceList = Array.isArray(job.surfaces) ? job.surfaces.join(", ") : "";
+  if (surfaceList !== "") details.push(surfaceList);
+  var detailText = details.join(" · ");
+  var detailLine = makeElement("div", "dim", detailText === "" ? "" : detailText + " · ");
+  var hasPartialFlag = job.cost_partial === true;
+  var hasCostFigure = typeof job.cost_usd === "number";
+  var cost = makeElement("span", null, formatCost(job.cost_usd, hasPartialFlag));
+  if (hasPartialFlag && hasCostFigure) {
+    cost.title = PARTIAL_COST_NOTE;
+    cost.setAttribute("aria-label", cost.textContent + " (" + PARTIAL_COST_NOTE + ")");
+  }
+  detailLine.appendChild(cost);
+  card.appendChild(detailLine);
+  if (job.reason !== undefined) card.appendChild(makeElement("div", "dim", job.reason));
+  if (job.pr_url !== undefined) {
+    var url = String(job.pr_url);
+    var linkUrl = safeUrl(job.pr_url);
+    if (linkUrl !== null) {
+      var a = makeElement("a", null, linkUrl);
+      a.href = linkUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
+      card.appendChild(makeElement("div")).appendChild(a);
+    } else {
+      card.appendChild(makeElement("div", "dim", url));
+    }
+  }
+  if (open[job.key] && cache[job.key]) card.appendChild(drawFiles(job.key, cache[job.key]));
+  function toggleJobFiles() {
+    if (open[job.key]) { delete open[job.key]; renderJobs(lastJobs); return; }
+    open[job.key] = true;
+    loadFiles(job.key).then(function (files) { cache[job.key] = files; renderJobs(lastJobs); });
+  }
+  card.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest(".files")) return;
+    toggleJobFiles();
+  });
+  card.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleJobFiles(); }
+  });
+  return card;
+}
+
+var lastJobs = [];
+// Every redraw replaces the cards, so the card that had keyboard focus gets it back.
+function restoreFocus(container, focusedKey) {
+  if (focusedKey === null) return;
+  var match = Array.prototype.find.call(container.children, function (child) { return child.dataset.key === focusedKey; });
+  if (match) match.focus();
+}
+
+function renderJobs(jobs) {
+  lastJobs = jobs;
+  var cards = document.getElementById("cards");
+  var active = document.activeElement;
+  var focusedKey = active && active.dataset && active.dataset.key !== undefined ? active.dataset.key : null;
+  cards.replaceChildren();
+  jobs.forEach(function (job) { cards.appendChild(drawCard(job)); });
+  restoreFocus(cards, focusedKey);
+}
+
+function refreshJobs() {
+  var status = document.getElementById("status");
+  fetch("jobs/index.json", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (jobs) {
+      var refreshText = "refreshed every " + (REFRESH_MS / SECOND_MS) + "s";
+      status.textContent = jobs.length === 0 ? "no jobs yet" : jobs.length + " job(s), " + refreshText;
+      // Refresh open file lists too, so a running job's tracker.log stays current.
+      return Promise.all(Object.keys(open).map(function (key) {
+        return loadFiles(key).then(function (files) { cache[key] = files; });
+      })).then(function () { renderJobs(jobs); });
+    })
+    .catch(function (err) { status.textContent = "cannot read jobs/index.json: " + err.message; });
+}
+
+refreshJobs();
+setInterval(refreshJobs, REFRESH_MS);
+</script>
+</body>
+</html>

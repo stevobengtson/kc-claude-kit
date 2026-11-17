@@ -42,6 +42,7 @@ jobs:
         run: |
           claude plugin test plugins/kc-usage-band
           claude plugin test plugins/kc-image-preview
+          claude plugin test plugins/kc-factory
 
   rules-in-sync:
     name: Generated rules match their skills

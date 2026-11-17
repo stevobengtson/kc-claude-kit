@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Run dir /runs/run-7\n\nUnit U3: ABC-7. Scope: Show a contact email."}}
+{"type":"assistant","message":{"id":"msg_011","model":"claude-sonnet-x","usage":{"input_tokens":2000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

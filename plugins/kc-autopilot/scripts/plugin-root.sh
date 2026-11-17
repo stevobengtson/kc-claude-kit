@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Finds a dependency plugin installed beside autopilot, so the deliver
-# workflow can run that plugin's own scripts (kc-gates's gather step).
+# Finds a dependency plugin installed beside the calling plugin, so the deliver
+# workflow can run that plugin's own scripts (kc-gates's gather step), and
+# kc-factory can find kc-autopilot.
 #
-# Usage: plugin-root.sh <autopilot-root> <plugin-name>
+# Usage: plugin-root.sh <caller-root> <plugin-name>
 # First, Claude Code's install record,
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/installed_plugins.json
 # ({"plugins": {"<name>@<marketplace>": [{scope, projectPath?, installPath}]}}):
-# the marketplace is the one whose kc-autopilot entry installed <autopilot-root>,
+# the marketplace is the one whose entry installed <caller-root>,
 # and <name>@<that marketplace> wins, preferring the entry for the current
 # directory's project, then the user-scope one, then any other. Then, as a
 # fallback, in order:
-#   <autopilot-root>/../<name>            plugins side by side (a marketplace
+#   <caller-root>/../<name>               plugins side by side (a marketplace
 #                                         checkout, or --plugin-dir siblings)
-#   <autopilot-root>/../../<name>/<ver>   the plugin cache layout,
+#   <caller-root>/../../<name>/<ver>      the plugin cache layout,
 #                                         ~/.claude/plugins/cache/<marketplace>/<name>/<version>;
 #                                         the highest version wins (sort -V)
 # A candidate counts only when its .claude-plugin/plugin.json names <name>.
@@ -22,7 +23,7 @@
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "autopilot: jq is required" >&2; exit 2; }
-[ "$#" = 2 ] || { echo "usage: plugin-root.sh <autopilot-root> <plugin-name>" >&2; exit 2; }
+[ "$#" = 2 ] || { echo "usage: plugin-root.sh <caller-root> <plugin-name>" >&2; exit 2; }
 root=$1
 name=$2
 
@@ -30,7 +31,7 @@ names_plugin() {
   [ -f "$1/.claude-plugin/plugin.json" ] && [ "$(jq -r '.name // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null)" = "$name" ]
 }
 
-# Prints the install path recorded for <name> in autopilot's marketplace.
+# Prints the install path recorded for <name> in the caller's marketplace.
 from_install_record() {
   local record=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json real_root project
   [ -f "$record" ] || return 1
@@ -38,8 +39,8 @@ from_install_record() {
   project=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
   jq -r --arg root "$real_root" --arg name "$name" --arg project "$project" '
     (.plugins // {}) as $p
-    | [$p | to_entries[] | select(.key | startswith("kc-autopilot@"))
-       | select(any(.value[]?; .installPath == $root)) | .key | sub("^kc-autopilot@"; "")] as $markets
+    | [$p | to_entries[] | select(.key | contains("@"))
+       | select(any(.value[]?; .installPath == $root)) | .key | sub("^[^@]*@"; "")] as $markets
     | [$markets[] as $m | $p["\($name)@\($m)"] // [] | .[]] as $entries
     | ([$entries[] | select(.projectPath == $project)] + [$entries[] | select(.scope == "user")] + $entries)
     | map(.installPath | strings) | .[]' "$record" 2>/dev/null

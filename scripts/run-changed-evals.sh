@@ -103,6 +103,24 @@ list_changed_rules() {
     | grep -E '^plugins/[^/]+/(skills/.+\.md|agents/[^/]+\.md|rules/[^/]+\.md)$' || true
 }
 
+# The tools claude plugin eval gates behind --allow-tools that a changed case may need.
+readonly GATED_TOOLS=(Bash Agent Write)
+
+# Prints the gated tools <case_dir>'s prompt.md allows at HEAD, one per line; all of them when it
+# names no allowed_tools. A run is granted only these: a shell the case never uses makes the eval
+# refuse to run on a machine with no sandbox to confine it.
+list_granted_tools() {
+  local allowed tool
+  allowed=$(git show "HEAD:$1/prompt.md" 2>/dev/null \
+    | sed -nE 's/^allowed_tools:[[:space:]]*\[(.*)\][[:space:]]*$/\1/p' | head -n 1 | tr ',' '\n' \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  for tool in "${GATED_TOOLS[@]}"; do
+    if [ -z "$allowed" ] || printf '%s\n' "$allowed" | grep -qxF "$tool"; then
+      printf '%s\n' "$tool"
+    fi
+  done
+}
+
 # True when <case_dir>'s tags hold <tag>.
 has_tag() {
   print_case_files "$1" | grep -E '^tags:' | tr -c 'a-z-' '\n' | grep -qx "$2"
@@ -163,6 +181,10 @@ while IFS= read -r case_dir; do
     target=(. --eval-dir "$plugin_dir/evals")
   fi
   result=$results_dir/${case_dir//\//_}.json
+  granted_tools=()
+  while IFS= read -r tool; do granted_tools+=("$tool"); done < <(list_granted_tools "$case_dir")
+  allow_args=()
+  [ "${#granted_tools[@]}" = 0 ] || allow_args=(--allow-tools "${granted_tools[@]}")
   echo "run  $case_dir"
   # --allow-tools takes a list, so it stays last.
   claude plugin eval "${target[@]}" \
@@ -176,7 +198,7 @@ while IFS= read -r case_dir; do
     --judge-model "$JUDGE_MODEL" \
     --no-publish \
     --max-cost-usd 10 \
-    --allow-tools Bash Agent >&2 || true
+    ${allow_args[@]+"${allow_args[@]}"} >&2 || true
   if [ ! -s "$result" ]; then
     verdict="the eval run wrote no result"
     printf '{}\n' > "$result"
@@ -229,7 +251,7 @@ while IFS= read -r case_dir; do
           --judge-model "$JUDGE_MODEL" \
           --no-publish \
           --max-cost-usd 10 \
-          --allow-tools Bash Agent >&2 ) || true
+          ${allow_args[@]+"${allow_args[@]}"} >&2 ) || true
       git worktree remove --force "$base_tree"
       [ -s "$base_result" ] || printf '{}\n' > "$base_result"
       verdict=$(jq -r --arg name "$case_name" '

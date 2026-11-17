@@ -31,6 +31,7 @@ The rest of the kit supports these three: the rules they check against, and the 
 | `kc-usage-band` | A status row above the prompt: model, branch, context used, rate limits, cost. | Always on. Terminal only. |
 | `kc-image-preview` | Shows thumbnails of images you paste into the prompt. | Always on. Terminal on macOS only. |
 | `kc-autopilot` 🚧 | **Work in progress.** Takes an approved plan and turns it into pull requests on its own. | Not ready for everyday use. |
+| `kc-factory` 🚧 | **Work in progress.** Takes tracker tickets to ready pull requests: rates each ticket, runs autopilot, keeps the ticket current. | Not ready for everyday use. |
 
 ## How they fit together
 
@@ -57,6 +58,7 @@ The rest of the kit supports these three: the rules they check against, and the 
 - **`kc-ready-for-review` ties it together:** it runs `kc-code-review`, then the `kc-verify` QA skills, then your project's own hand-off checklist if it has one.
 - **`kc-instructions`, `kc-usage-band` and `kc-image-preview` stand alone.** Use them or not; nothing else depends on them.
 - **`kc-autopilot`** (work in progress) sits on top of `kc-gates` and `kc-conventions`.
+- **`kc-factory`** (work in progress) wraps `kc-autopilot`: tickets in, `kc-autopilot:kc-run` in the middle, ready PRs out.
 
 ## Every skill, in one line
 
@@ -115,6 +117,15 @@ Most skills start on their own when the topic comes up. You can also type any of
 | `kc-init` | Sets a repo up for autopilot. Run once per repo, by typing it. |
 | `kc-run` | Splits an approved plan into units and delivers each as a pull request. |
 
+**`kc-factory`** 🚧 work in progress
+
+| Skill | What it does |
+|---|---|
+| `kc-init` | Sets a repo up for the factory: autopilot, the tracker settings, an ignored `.factory/`. Run once per repo, by typing it. |
+| `factory` | `/kc-factory:factory ABC-1 ABC-2` rates each ticket, builds the clear ones through autopilot, and ends every ticket at a ready PR, a question, a rejection or a block. Nothing merges. It uses your session's Atlassian connector. |
+
+`/factory-dashboard` opens a pane beside the chat with every job; `bash <plugin>/scripts/dashboard.sh` serves the same page on localhost.
+
 `kc-usage-band` and `kc-image-preview` have no skills. Once installed, they just show up above the prompt.
 
 ## Install
@@ -136,10 +147,11 @@ Add the marketplace, then install what you want. To get the everyday workflow, t
 /kc-conventions:kc-init
 ```
 
-`kc-autopilot` is a work in progress; install it only if you want to try it:
+`kc-autopilot` and `kc-factory` are works in progress; install them only if you want to try them:
 
 ```
 /plugin install kc-autopilot@kc-claude-kit
+/plugin install kc-factory@kc-claude-kit
 ```
 
 To keep the kit current, turn on auto-update for the marketplace: `/plugin`, the Marketplaces tab, `kc-claude-kit`, **Enable auto-update**.
