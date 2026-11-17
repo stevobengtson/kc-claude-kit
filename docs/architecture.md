@@ -53,11 +53,11 @@ kc-claude-kit/
     │   ├── .claude-plugin/plugin.json      # depends on kc-autopilot
     │   ├── skills/                         # factory (the orchestrator), kc-init (user-invoked setup)
     │   ├── agents/intake.md                # rates one ticket
-    │   ├── scripts/*.sh                    # read-config, job, ticket, route, plan, apply-result, cost, dashboard
+    │   ├── scripts/*.sh                    # read-config, job, ticket, route, plan, apply-result, cost, dashboard, guard-intake
     │   ├── scripts/dashboard-server.py     # the localhost page's server
-    │   ├── hooks/ , dashboard/             # the pane (a mod) and the browser page
+    │   ├── hooks/ , dashboard/             # the pane (a mod), the intake guard hook and the browser page
     │   ├── tests/                          # script runners and the pane test
-    │   └── evals/                          # the four intake cases
+    │   └── evals/                          # the five intake cases
     ├── kc-verify/                          # kc-ui, kc-ux and kc-e2e skills
     ├── kc-instructions/                    # kc-audit skill; the claude- prefix is reserved
     ├── kc-usage-band/                      # mod
@@ -177,15 +177,15 @@ Measured on Claude Code 2.1.292 unless stated.
 | `blocked` | `queued` (the user gave feedback), `rejected` |
 | `ready`, `rejected` | none: finished |
 
-A job ends at a ready PR (`ready`), a question on the ticket (`needs-info`), a rejection with its reason (`rejected`) or a block that waits for the user (`blocked`). A person reviews and merges every PR. Ticket text is data: it reaches an agent only through a quoted `ticket.md`, and the intake agent can write only its own `intake.md`. Each comment and status move is logged in `tracker.log` and checked against it first, so a session that dies and restarts never posts twice.
+A job ends at a ready PR (`ready`), a question on the ticket (`needs-info`), a rejection with its reason (`rejected`) or a block that waits for the user (`blocked`). A person reviews and merges every PR. Ticket text is data: it reaches the intake agent only through a quoted `ticket.md`, and nothing after intake reads the ticket. Intake is the sanitizer: the plan is built from `intake.md` (its own title, scope and criteria, the ticket's criteria copied where it had them), never from the tracker's summary or description. Because that agent reads hostile text and its summary is posted back to the ticket, a PreToolUse hook (`scripts/guard-intake.sh`) holds it for `agent_type` `kc-factory:intake`: it may write only `.factory/jobs/<KEY>/intake.md` in the repo, may Read, Glob and Grep only inside the repo and never a secret-looking path (`.env*`, `*.pem`, `*.key`, `id_*`, `.ssh/`, `.aws/`, `.netrc`, `*credentials*`, `*secret*`, `.git/`), and may use no other tool. Paths are compared after `..` is collapsed and symlinks are followed, and the hook fails closed for that agent. Each comment and status move is logged in `tracker.log` and checked against it first, so a session that dies and restarts never posts twice.
 
 **Where state lives.** Config is `.claude/factory.json` (tracker site, project keys, status names, which comments to post, concurrency, the routing table, the intake model), written by `/kc-factory:kc-init` and committed. Everything else is `.factory/`, git-ignored: `jobs/<KEY>/` (the job state, the fetched ticket, `intake.md`, `routing.json`, `tracker.log`, comments, feedback) and `runs/<run_id>/` (each run's plan, its autopilot config copy and a copy of kc-run's result). The state is files on purpose: a session that ends mid-run resumes from them, and the dashboard needs nothing else.
 
 **The tracker is the session's own connector.** The plugin ships no Atlassian connection and stores no credentials; the skill uses whatever Jira tools the session already has from the person's own Atlassian connector. Without one it stops before any write and says how to connect one.
 
-**The dashboard.** `/factory-dashboard` opens a pane beside the chat from `jobs/index.json`, which `job.sh` rewrites after every change; the pane refreshes only while it is open and a job can still change. The command is not namespaced because a mod's commands never are, and `/dashboard` is built into Claude Code. For a full browser tab, `bash <plugin>/scripts/dashboard.sh [port]` (default 8765) serves a page on `127.0.0.1` only. It serves the plugin's own page and a fixed allowlist of job files, never the factory folder as a whole, and refuses a request whose `Host` header is not the local address, which stops a web page from reading it through DNS rebinding.
+**The dashboard.** `/factory-dashboard` opens a pane beside the chat from `jobs/index.json`, which `job.sh` rewrites after every change; the pane refreshes only while it is open and a job can still change. The command is not namespaced because a mod's commands never are, and `/dashboard` is built into Claude Code. For a full browser tab, `bash <plugin>/scripts/dashboard.sh [port]` (default 8765) serves a page on `127.0.0.1` only. It serves the plugin's own page and a fixed allowlist of job files, never the factory folder as a whole, and refuses a request whose `Host` header is not the local address, which stops a web page from reading it through DNS rebinding. Each card's cost comes from Claude Code's transcripts (`cost.sh`): the agents a job's unit ran plus its intake. Agents its run shared across units (review prep, gates, triage, shipping) belong to no one job, so when there are any the cost is a lower bound and shows as `$X+`, "agents shared across the run not included".
 
-**Held by.** Each script has a runner in `plugins/kc-factory/tests/`, the pane has `kc-factory.test.tsx`, and four intake cases (accept, needs-info, reject, injection) are under `evals/`; they run real agents, so they are committed without a `proof.json` until run on a sandboxed machine.
+**Held by.** Each script has a runner in `plugins/kc-factory/tests/`, the pane has `kc-factory.test.tsx`, the intake guard has `guard-intake.test.sh`, and five intake cases (accept, needs-info, reject, injection, secret leak) are under `evals/`; they run real agents, so they are committed without a `proof.json` until run on a sandboxed machine.
 
 ### Versioning
 
