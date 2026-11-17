@@ -4,9 +4,11 @@
 # ticket, so it gets the least it needs:
 #   - Write, Edit, MultiEdit: only a file named intake.md directly inside
 #     <repo>/.factory/jobs/<KEY>/.
-#   - Read, Glob, Grep: only inside the repo, and never a secret-looking path
+#   - Read, Glob: only inside the repo, and never a secret-looking path
 #     (.env*, *.pem, *.key, id_*, .ssh/, .aws/, .netrc, *credentials*, *secret*,
-#     .git/). Glob and Grep patterns may not be absolute or use "..".
+#     .git/). Glob patterns may not be absolute or use "..".
+#   - Grep: one named file that Read may read. Grep reads the contents of every
+#     file it searches, so a directory could reach a secret-looking file.
 #   - No path or pattern may start with "~".
 #   - Every other tool: denied.
 # Paths are made absolute against the hook's cwd, ".." is collapsed, and the real
@@ -52,8 +54,10 @@ deny() {
 # would treat as "allow".
 # shellcheck disable=SC2317,SC2329
 on_exit() {
-  local status=$?
-  if [ "$status" != 0 ] && [ "$decided" = 0 ] && looks_like_intake; then
+  local status=$? exited_badly=false undecided=false
+  [ "$status" = 0 ] || exited_badly=true
+  [ "$decided" = 1 ] || undecided=true
+  if [ "$exited_badly" = true ] && [ "$undecided" = true ] && looks_like_intake; then
     deny "guard error; refusing the tool call"
   fi
   exit 0
@@ -70,14 +74,14 @@ if ! agent=$(printf '%s' "$input" | jq -r '.agent_type // empty' 2>/dev/null); t
 fi
 [ "$agent" = kc-factory:intake ] || exit 0
 
-field() { printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null; }
-tool=$(field .tool_name)
-cwd=$(field .cwd)
+read_hook_field() { printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null; }
+tool=$(read_hook_field .tool_name)
+cwd=$(read_hook_field .cwd)
 [ -n "$cwd" ] || cwd=$PWD
 
-# lexical <path> <base>: <path> made absolute against <base>, with //, /./ and
+# normalize_path <path> <base>: <path> made absolute against <base>, with //, /./ and
 # /../ collapsed, so a ".." cannot step out of an allowed directory.
-lexical() {
+normalize_path() {
   local path=$1 out="" seg
   case "$path" in /*) ;; *) path="$2/$path" ;; esac
   local IFS=/
@@ -91,17 +95,18 @@ lexical() {
   printf '%s' "${out:-/}"
 }
 
-# real <absolute path>: the path with every symlink followed, for a path that
+# resolve_real_path <absolute path>: the path with every symlink followed, for a path that
 # may not exist yet (its nearest existing directory is resolved and the rest
 # appended). Fails on a symlink loop or a dangling link on the way.
-real() {
-  local path=$1 hops=0 target dir rest=""
+resolve_real_path() {
+  # 40 is the symlink-loop limit common to Linux and macOS.
+  local path=$1 hops=0 max_hops=40 target dir rest=""
   while [ -L "$path" ]; do
     hops=$((hops + 1))
-    [ "$hops" -le 40 ] || return 1
+    [ "$hops" -le "$max_hops" ] || return 1
     target=$(readlink "$path") || return 1
     case "$target" in /*) ;; *) target="${path%/*}/$target" ;; esac
-    path=$(lexical "$target" /)
+    path=$(normalize_path "$target" /)
   done
   dir=$path
   while [ ! -d "$dir" ]; do
@@ -117,13 +122,18 @@ real() {
 }
 
 root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || root=$cwd
-root=$(real "$(lexical "$root" /)") || deny "cannot resolve the repo root"
+root=$(resolve_real_path "$(normalize_path "$root" /)") || deny "cannot resolve the repo root"
 
-# inside_root <real path>: is it the repo root or under it?
-inside_root() { [ "$1" = "$root" ] || [ "${1#"$root"/}" != "$1" ]; }
+# is_inside_repo_root <real path>: is it the repo root or under it?
+is_inside_repo_root() {
+  local is_root=false is_under_root=false
+  [ "$1" != "$root" ] || is_root=true
+  [ "${1#"$root"/}" = "$1" ] || is_under_root=true
+  [ "$is_root" = true ] || [ "$is_under_root" = true ]
+}
 
-# secret <real path inside the root>: does any part of it look like a secret?
-secret() {
+# is_secret_looking_path <real path inside the root>: does any part of it look like a secret?
+is_secret_looking_path() {
   local rel=${1#"$root"} seg base lower
   base=${rel##*/}
   local IFS=/
@@ -140,60 +150,65 @@ secret() {
   return 1
 }
 
-# no_home <path>: deny a path starting with "~". Claude Code expands it to a
+# deny_tilde_path <path>: deny a path starting with "~". Claude Code expands it to a
 # home directory, which this guard would otherwise join onto the cwd.
-no_home() {
+deny_tilde_path() {
   case "$1" in '~'*) deny "$tool of a ~ path is not allowed: $1" ;; esac
 }
 
-# readable <path>: deny unless it is inside the repo and not secret-looking.
-readable() {
+# deny_unless_readable <path>: deny unless it is inside the repo and not secret-looking.
+deny_unless_readable() {
   local abs resolved
   [ -n "$1" ] || deny "$tool needs a path"
-  no_home "$1"
-  abs=$(lexical "$1" "$cwd")
-  resolved=$(real "$abs") || deny "cannot resolve $1"
-  inside_root "$resolved" || deny "$tool outside the repo is not allowed: $1"
-  if secret "$resolved" || secret "$root${abs#"${abs%/*}"}"; then
+  deny_tilde_path "$1"
+  abs=$(normalize_path "$1" "$cwd")
+  resolved=$(resolve_real_path "$abs") || deny "cannot resolve $1"
+  is_inside_repo_root "$resolved" || deny "$tool outside the repo is not allowed: $1"
+  if is_secret_looking_path "$resolved" || is_secret_looking_path "$root${abs#"${abs%/*}"}"; then
     deny "$tool of a secret-looking path is not allowed: $1"
   fi
 }
 
-# safe_pattern <glob>: relative, with no ".." part.
-safe_pattern() {
+# deny_unsafe_pattern <glob>: relative, with no ".." part.
+deny_unsafe_pattern() {
+  deny_tilde_path "$1"
   case "$1" in
-    /*|'~'*) deny "$tool patterns must be relative: $1" ;;
+    /*) deny "$tool patterns must be relative: $1" ;;
     ..|../*|*/..|*/../*) deny "$tool patterns may not use ..: $1" ;;
   esac
 }
 
 case "$tool" in
   Write|Edit|MultiEdit)
-    file=$(field .tool_input.file_path)
+    file=$(read_hook_field .tool_input.file_path)
     [ -n "$file" ] || deny "$tool needs a file_path"
-    no_home "$file"
-    resolved=$(real "$(lexical "$file" "$cwd")") || deny "cannot resolve $file"
+    deny_tilde_path "$file"
+    resolved=$(resolve_real_path "$(normalize_path "$file" "$cwd")") || deny "cannot resolve $file"
     job_dir=${resolved%/*}
     key=${job_dir##*/}
-    if [ "${resolved##*/}" = intake.md ] && [ "${job_dir%/*}" = "$root/.factory/jobs" ] \
-      && [[ $key =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]; then
+    is_intake_file=false is_in_jobs_dir=false is_ticket_key=false
+    [ "${resolved##*/}" != intake.md ] || is_intake_file=true
+    [ "${job_dir%/*}" != "$root/.factory/jobs" ] || is_in_jobs_dir=true
+    [[ ! $key =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]] || is_ticket_key=true
+    if [ "$is_intake_file" = true ] && [ "$is_in_jobs_dir" = true ] && [ "$is_ticket_key" = true ]; then
       exit 0
     fi
     deny "it may write only .factory/jobs/<KEY>/intake.md, not $file"
     ;;
   Read)
-    readable "$(field .tool_input.file_path)"
+    deny_unless_readable "$(read_hook_field .tool_input.file_path)"
     ;;
   Glob)
-    safe_pattern "$(field .tool_input.pattern)"
-    path=$(field .tool_input.path)
-    readable "${path:-$cwd}"
+    deny_unsafe_pattern "$(read_hook_field .tool_input.pattern)"
+    path=$(read_hook_field .tool_input.path)
+    deny_unless_readable "${path:-$cwd}"
     ;;
   Grep)
-    glob=$(field .tool_input.glob)
-    [ -z "$glob" ] || safe_pattern "$glob"
-    path=$(field .tool_input.path)
-    readable "${path:-$cwd}"
+    path=$(read_hook_field .tool_input.path)
+    [ -n "$path" ] || deny "Grep may search one named file; use Glob to find files, then Read or Grep one"
+    deny_unless_readable "$path"
+    [ -f "$(resolve_real_path "$(normalize_path "$path" "$cwd")")" ] \
+      || deny "Grep may search one named file, not a directory: $path; use Glob to find files, then Read or Grep one"
     ;;
   *)
     deny "only Read, Glob, Grep and writing its intake.md are allowed, not ${tool:-an unnamed tool}"

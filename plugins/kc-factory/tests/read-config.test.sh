@@ -36,7 +36,7 @@ expect_error() {
 }
 
 expect_value "defaults: whole config" minimal.json '.' \
-  '{"tracker":{"kind":"jira","site":"example.atlassian.net","project_keys":["ABC"],"statuses":{"in_progress":"In Progress","in_review":"In Review"},"comment_on":["needs-info","reject","accept","ready","blocked"]},"concurrency":3,"intake":{"model":"best"},"routing":{"low":{"workers":"sonnet","personas":{"min":2,"max":3},"security":"workers"},"medium":{"workers":"sonnet","personas":{"min":3,"max":4},"security":"workers"},"high":{"workers":"best","personas":{"min":4,"max":5},"security":"staff"},"surfaces":{"security":{"security":"staff"}}},"prices_usd_per_mtok":{}}'
+  '{"tracker":{"site":"example.atlassian.net","project_keys":["ABC"],"statuses":{"in_progress":"In Progress","in_review":"In Review"},"comment_on":["needs-info","reject","accept","ready","blocked"]},"concurrency":3,"intake":{"model":"best"},"routing":{"low":{"workers":"sonnet","personas":{"min":2,"max":3},"security":"workers"},"medium":{"workers":"sonnet","personas":{"min":3,"max":4},"security":"workers"},"high":{"workers":"best","personas":{"min":4,"max":5},"security":"staff"},"surfaces":{"security":{"security":"staff"}}},"prices_usd_per_mtok":{}}'
 expect_value "keeps: site and keys"   full.json '.tracker | [.site, .project_keys]' '["shop.atlassian.net",["ABC","WEB2"]]'
 expect_value "keeps: statuses"        full.json '.tracker.statuses'   '{"in_progress":"Doing","in_review":"Review"}'
 expect_value "keeps: comment_on"      full.json '.tracker.comment_on' '["needs-info","ready"]'

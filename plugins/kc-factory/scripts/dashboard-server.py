@@ -14,7 +14,7 @@ import sys
 
 KEY = re.compile(r"^[A-Z][A-Z0-9]+-[0-9]+$")
 FIXED = {"intake.md", "routing.json", "tracker.log", "blocked.md", "ticket.md"}
-FEEDBACK = re.compile(r"^feedback-([1-9]|1[0-9]|20)\.md$")
+FEEDBACK = re.compile(r"^feedback-[1-9][0-9]*\.md$")
 
 
 def make_handler(port, jobs_root, page_path):

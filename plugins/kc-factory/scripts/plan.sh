@@ -26,24 +26,29 @@ run_dir=$1
 shift
 refuse() { echo "plan: $*" >&2; exit 1; }
 
-if [ -n "${FACTORY_HOME:-}" ]; then
-  home=$FACTORY_HOME
-elif root=$(git rev-parse --show-toplevel 2>/dev/null); then
-  home="$root/.factory"
-else
-  echo "plan: set FACTORY_HOME outside a git repo" >&2
-  exit 2
-fi
+# shellcheck source=factory-home.sh
+. "$(dirname "$0")/factory-home.sh"
+resolve_factory_home plan
 
-# section <intake.md> <heading>: the lines under "## <heading>", up to the next heading.
-section() {
-  awk -v want="$2" '
-    /^## / { name = $0; sub(/^##[ \t]+/, "", name); sub(/[ \t\r]+$/, "", name); on = (name == want); next }
-    on { sub(/\r$/, ""); print }' "$1"
+# shellcheck source=intake-format.sh
+. "$(dirname "$0")/intake-format.sh"
+
+# flatten_to_one_line <text>: the text on one line, so it cannot start a new plan line.
+flatten_to_one_line() { printf '%s' "$1" | tr '\r\n' '  '; }
+
+# join_lines [file]: the non-blank lines of the file (or stdin), trimmed, joined by one space.
+join_lines() { awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); printf "%s%s", (joined++ ? " " : ""), $0 }' "$@"; }
+
+# join_list_items <item-marker ERE>: one line per list item read from stdin, the
+# marker removed and each wrapped continuation line joined on with one space. A
+# blank line ends an item.
+join_list_items() {
+  awk -v marker="$1" '
+    $0 ~ marker { if (item != "") print item; item = $0; sub(marker, "", item); next }
+    /^[ \t]*$/ { if (item != "") print item; item = ""; next }
+    item != "" { line = $0; sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line); item = item " " line }
+    END { if (item != "") print item }'
 }
-
-# flat <text>: the text on one line, so it cannot start a new plan line.
-flat() { printf '%s' "$1" | tr '\r\n' '  '; }
 
 for key in "$@"; do
   [ "$(printf '%s\n' "$@" | grep -cxF -- "$key")" = 1 ] || refuse "$key given twice"
@@ -72,11 +77,13 @@ for key in "$@"; do
   [ -f "$job_dir/routing.json" ] || refuse "$key has no routing.json"
 
   # Intake's own one-line title, never the tracker's summary (job.json title).
-  title=$(section "$job_dir/intake.md" "Title" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print; exit }')
-  title=$(flat "$title")
-  routing=$(jq -r '"- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)" | gsub("[\r\n]+"; " ")' "$job_dir/routing.json") \
-    || refuse "$key routing.json is not valid routing"
-  scope=$(flat "$(section "$job_dir/intake.md" "Scope" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); printf "%s%s", (n++ ? " " : ""), $0 }')")
+  title=$(get_intake_section "$job_dir/intake.md" "Title" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print; exit }')
+  title=$(flatten_to_one_line "$title")
+  # route.sh writes the Routing line into routing.json; it is only flattened here.
+  routing=$(jq -r '.line // "" | gsub("[\r\n]+"; " ")' "$job_dir/routing.json") \
+    || refuse "$key routing.json is not valid JSON"
+  [ "${routing#- Routing: }" != "$routing" ] || refuse "$key routing.json has no Routing line"
+  scope=$(flatten_to_one_line "$(get_intake_section "$job_dir/intake.md" "Scope" | join_lines)")
   # A job resumed from blocked: the user's feedback-<n>.md files, oldest first,
   # and the branch of its earlier attempt join the unit's Scope line, which
   # every autopilot worker is sent. Flattened like everything else.
@@ -84,7 +91,8 @@ for key in "$@"; do
   feedback=""
   i=1
   while [ -f "$job_dir/feedback-$i.md" ]; do
-    feedback="${feedback:+$feedback }$(flat "$(awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); printf "%s%s", (n++ ? " " : ""), $0 }' "$job_dir/feedback-$i.md")")"
+    one_feedback=$(flatten_to_one_line "$(join_lines "$job_dir/feedback-$i.md")")
+    feedback="${feedback:+$feedback }$one_feedback"
     i=$((i + 1))
   done
   if [ -n "$feedback" ]; then
@@ -95,8 +103,8 @@ for key in "$@"; do
       unit_scope="$unit_scope An earlier attempt is on branch $branch; start from its commits where they are sound."
     fi
   fi
-  url=$(section "$job_dir/intake.md" "Ticket" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\r')
-  ac_lines=$(section "$job_dir/intake.md" "Acceptance criteria" | sed -n 's/^[0-9][0-9]*\.[ \t][ \t]*//p')
+  url=$(get_intake_section "$job_dir/intake.md" "Ticket" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\r')
+  ac_lines=$(get_intake_section "$job_dir/intake.md" "Acceptance criteria" | join_list_items '^[0-9]+\\.[ \t]+')
   [ -n "$ac_lines" ] || refuse "$key intake has no acceptance criteria"
 
   count=0
@@ -105,7 +113,7 @@ for key in "$@"; do
   while IFS= read -r criterion; do
     count=$((count + 1))
     ac=$((next_ac + count - 1))
-    criteria="${criteria}${ac}. $(flat "$criterion")"$'\n'
+    criteria="${criteria}${ac}. $(flatten_to_one_line "$criterion")"$'\n'
     covers="${covers:+$covers, }AC${ac}"
     local_map=$(jq -c --arg ac "AC$ac" --argjson i "$count" '. + {($ac): $i}' <<<"$local_map")
   done <<<"$ac_lines"
@@ -121,9 +129,9 @@ for key in "$@"; do
     unit_title=$key
   fi
   units="${units}### ${unit}: ${unit_title}"$'\n'"- Depends on: none"$'\n'"- Covers: ${covers}"$'\n'"${routing}"$'\n'"- Scope: ${unit_scope}"$'\n\n'
-  section "$job_dir/intake.md" "Out of scope" | sed -n 's/^[ \t]*-[ \t][ \t]*//p' > "$tmp/oos"
+  get_intake_section "$job_dir/intake.md" "Out of scope" | join_list_items '^[ \t]*-[ \t]+' > "$tmp/oos"
   while IFS= read -r item; do
-    oos="${oos}- ${key}: $(flat "$item")"$'\n'
+    oos="${oos}- ${key}: $(flatten_to_one_line "$item")"$'\n'
   done < "$tmp/oos"
   notes="${notes}### ${key}"$'\n'"Ticket: ${url}"$'\n'"Accepted scope: ${scope}"$'\n\n'
 done
@@ -151,21 +159,22 @@ title_keys=$(printf '%s, ' "$@")
 } > "$tmp/plan.md"
 printf '%s\n' "$map" > "$tmp/map.json"
 
-# Self-check with the autopilot validator: KC_AUTOPILOT_ROOT's when set (an
-# installed plugin sits in a versioned cache dir, so the skill passes the root
-# plugin-root.sh found), else the one beside this plugin when it is there.
+# Self-check with the autopilot validator: KC_AUTOPILOT_ROOT's when set, else
+# the kc-autopilot that plugin-root.sh finds (installed plugins sit in versioned
+# cache dirs). A plan is never written unchecked.
 if [ -n "${KC_AUTOPILOT_ROOT:-}" ]; then
-  validator="$KC_AUTOPILOT_ROOT/scripts/validate-plan.sh"
-  [ -f "$validator" ] || refuse "KC_AUTOPILOT_ROOT has no scripts/validate-plan.sh: $KC_AUTOPILOT_ROOT"
+  autopilot_root=$KC_AUTOPILOT_ROOT
 else
-  validator="$(dirname "$0")/../../kc-autopilot/scripts/validate-plan.sh"
+  plugin_root=$(cd "$(dirname "$0")/.." && pwd)
+  autopilot_root=$(bash "$(dirname "$0")/plugin-root.sh" "$plugin_root" kc-autopilot 2>/dev/null) \
+    || refuse "cannot find kc-autopilot to check the plan; install it or set KC_AUTOPILOT_ROOT"
 fi
-if [ -f "$validator" ]; then
-  if ! problems=$(bash "$validator" "$tmp/plan.md" 2>&1 >/dev/null); then
-    echo "plan: generated plan is invalid:" >&2
-    printf '%s\n' "$problems" >&2
-    exit 1
-  fi
+validator="$autopilot_root/scripts/validate-plan.sh"
+[ -f "$validator" ] || refuse "kc-autopilot has no scripts/validate-plan.sh: $autopilot_root"
+if ! problems=$(bash "$validator" "$tmp/plan.md" 2>&1 >/dev/null); then
+  echo "plan: generated plan is invalid:" >&2
+  printf '%s\n' "$problems" >&2
+  exit 1
 fi
 
 mkdir -p "$run_dir"

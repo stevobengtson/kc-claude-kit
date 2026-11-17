@@ -89,27 +89,27 @@ else
 fi
 
 base="http://127.0.0.1:$port"
-# status_of <expected> <label> <curl args...>
-status_of() {
+# expect_status_code <expected> <label> <curl args...>
+expect_status_code() {
   local expected=$1 label=$2 got
   shift 2
   got=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "$@" || true)
   if [ "$got" = "$expected" ]; then pass "$label"; else fail "$label" "wanted $expected, got $got"; fi
 }
-status_of 403 "server (dashboard-server.py): foreign Host header is refused" -H 'Host: evil.test' "$base/"
-status_of 403 "server: foreign Host with the right port is refused" -H "Host: evil.test:$port" "$base/jobs/index.json"
-status_of 200 "server: localhost Host is accepted" -H "Host: localhost:$port" "$base/"
-status_of 200 "server: allowed job file" "$base/jobs/ABC-1/ticket.md"
-status_of 200 "server: allowed feedback file" "$base/jobs/ABC-1/feedback-1.md"
-status_of 404 "server: missing allowed name is 404" "$base/jobs/ABC-1/intake.md"
-status_of 404 "server: runs/ is not served" "$base/runs/x/autopilot.json"
-status_of 404 "server: dot-dot escape is 404" "$base/jobs/ABC-1/../../f.json"
-status_of 404 "server: encoded dot-dot escape is 404" "$base/jobs/ABC-1/%2e%2e/%2e%2e/f.json"
-status_of 404 "server: symlink escape is 404" "$base/jobs/ABC-1/routing.json"
-status_of 404 "server: file outside the allowlist is 404" "$base/jobs/ABC-1/job.json"
-status_of 404 "server: bad key is 404" "$base/jobs/abc-1/ticket.md"
-status_of 404 "server: feedback-21 is 404" "$base/jobs/ABC-1/feedback-21.md"
-status_of 405 "server: POST is refused" -X POST "$base/"
+expect_status_code 403 "server (dashboard-server.py): foreign Host header is refused" -H 'Host: evil.test' "$base/"
+expect_status_code 403 "server: foreign Host with the right port is refused" -H "Host: evil.test:$port" "$base/jobs/index.json"
+expect_status_code 200 "server: localhost Host is accepted" -H "Host: localhost:$port" "$base/"
+expect_status_code 200 "server: allowed job file" "$base/jobs/ABC-1/ticket.md"
+expect_status_code 200 "server: allowed feedback file" "$base/jobs/ABC-1/feedback-1.md"
+expect_status_code 404 "server: missing allowed name is 404" "$base/jobs/ABC-1/intake.md"
+expect_status_code 404 "server: runs/ is not served" "$base/runs/x/autopilot.json"
+expect_status_code 404 "server: dot-dot escape is 404" "$base/jobs/ABC-1/../../f.json"
+expect_status_code 404 "server: encoded dot-dot escape is 404" "$base/jobs/ABC-1/%2e%2e/%2e%2e/f.json"
+expect_status_code 404 "server: symlink escape is 404" "$base/jobs/ABC-1/routing.json"
+expect_status_code 404 "server: file outside the allowlist is 404" "$base/jobs/ABC-1/job.json"
+expect_status_code 404 "server: bad key is 404" "$base/jobs/abc-1/ticket.md"
+expect_status_code 404 "server: feedback-0 is not a feedback file" "$base/jobs/ABC-1/feedback-0.md"
+expect_status_code 405 "server: POST is refused" -X POST "$base/"
 if [ "$(curl -s -D - -o /dev/null "$base/jobs/ABC-1/ticket.md" | tr -d '\r' | grep -ic '^x-content-type-options: nosniff')" = 1 ]; then
   pass "server: sends nosniff"
 else

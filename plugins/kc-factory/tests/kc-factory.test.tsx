@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { formatCost, formatElapsed } from '../hooks/cards'
+import { formatCost, formatElapsed } from '../hooks/job-format'
 
 const ROOT = '/work/shop'
 const INDEX = `${ROOT}/.factory/jobs/index.json`
@@ -52,10 +52,15 @@ const BAND_PROPS = {
   view: {},
 }
 
+const OPEN_PANE = { id: 'kc-factory', title: 'Factory', isShown: true, isFocused: false, isPlaced: true }
+// What the engine beneath draws for a component the plugin passes on; the stub returns a
+// stand-in, typed `never` because the engine's own element type is not constructible here.
+const ENGINE_DRAWING = { type: 'engine', ref: 0 } as never
+
 type World = { index: string | undefined; opened: string[]; reads: number; isPaneOpen: boolean }
 
 // The engine beneath the plugin: a project root, one index file (or none) and a pane that opens.
-function world(on: On, index: string | undefined) {
+function buildWorld(on: On, index: string | undefined) {
   const state: World = { index, opened: [], reads: 0, isPaneOpen: false }
   const clock = mock.clock(on, { now: NOW })
   on('session.root', () => ({ value: ROOT }))
@@ -71,11 +76,11 @@ function world(on: On, index: string | undefined) {
     return { value: { isPlaced: true } }
   })
   on('ui.panes', () => ({
-    value: state.isPaneOpen ? [{ id: 'kc-factory', title: 'Factory', isShown: true, isFocused: false, isPlaced: true }] : [],
+    value: state.isPaneOpen ? [OPEN_PANE] : [],
   }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {} }))
-  on('ui.render', () => ({ type: 'engine', ref: 0 }) as never)
+  on('ui.render', () => ENGINE_DRAWING)
   return { state, clock }
 }
 
@@ -98,7 +103,7 @@ describe('format', () => {
   })
 
   test('cost', async () => {
-    expect([formatCost(1.5), formatCost(null), formatCost(undefined)]).toEqual(['$1.50', 'cost unavailable', 'cost unavailable'])
+    expect([formatCost(1.5, false), formatCost(null, false), formatCost(undefined, false)]).toEqual(['$1.50', 'cost unavailable', 'cost unavailable'])
   })
 
   test('a partial cost is a lower bound', async () => {
@@ -108,7 +113,7 @@ describe('format', () => {
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`no index file draws "No factory jobs yet" on ${surface}`, async ($, on) => {
-    world(on, undefined)
+    buildWorld(on, undefined)
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -117,7 +122,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`an unparsable index draws "No factory jobs yet" on ${surface}`, async ($, on) => {
-    world(on, '{ not json')
+    buildWorld(on, '{ not json')
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -126,7 +131,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`two jobs draw two cards with their stages on ${surface}`, async ($, on) => {
-    world(on, JSON.stringify([ORDER_TOTALS, REFUND_EMAILS]))
+    buildWorld(on, JSON.stringify([ORDER_TOTALS, REFUND_EMAILS]))
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -152,7 +157,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`a null cost draws "cost unavailable" on ${surface}`, async ($, on) => {
-    world(on, JSON.stringify([REFUND_EMAILS]))
+    buildWorld(on, JSON.stringify([REFUND_EMAILS]))
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -161,7 +166,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`a partial cost draws "$X+" and says what it leaves out on ${surface}`, async ($, on) => {
-    world(on, JSON.stringify([{ ...ORDER_TOTALS, cost_partial: true }]))
+    buildWorld(on, JSON.stringify([{ ...ORDER_TOTALS, cost_partial: true }]))
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -172,7 +177,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`a whole cost has no "+" and no note on ${surface}`, async ($, on) => {
-    world(on, JSON.stringify([ORDER_TOTALS]))
+    buildWorld(on, JSON.stringify([ORDER_TOTALS]))
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('dock') })
@@ -183,7 +188,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`the widget draws one line per job on ${surface}`, async ($, on) => {
-    world(on, JSON.stringify([ORDER_TOTALS, REFUND_EMAILS]))
+    buildWorld(on, JSON.stringify([ORDER_TOTALS, REFUND_EMAILS]))
     await runDashboard($)
 
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('widget') })
@@ -194,7 +199,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`advancing the clock re-reads a changed index on ${surface}`, async ($, on) => {
-    const { state, clock } = world(on, JSON.stringify([ORDER_TOTALS]))
+    const { state, clock } = buildWorld(on, JSON.stringify([ORDER_TOTALS]))
     await runDashboard($)
     const ui = await $.ui.mount({ plugin: 'kc-factory', surface, component: 'Pane', requestId: 'kc-factory', props: paneProps('widget') })
     expect((await ui.find({ type: 'Text', text: /ABC-1/ }))?.text).toBe('ABC-1 delivering')
@@ -207,7 +212,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`the refresh stops once no job is running on ${surface}`, async ($, on) => {
-    const { state, clock } = world(on, JSON.stringify([ORDER_TOTALS]))
+    const { state, clock } = buildWorld(on, JSON.stringify([ORDER_TOTALS]))
     await runDashboard($)
     state.index = JSON.stringify([{ ...ORDER_TOTALS, stage: 'ready' }])
     await clock.advance(5 * SECOND)
@@ -218,7 +223,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`closing the pane stops the refresh on ${surface}`, async ($, on) => {
-    const { state, clock } = world(on, JSON.stringify([ORDER_TOTALS]))
+    const { state, clock } = buildWorld(on, JSON.stringify([ORDER_TOTALS]))
     await runDashboard($)
     // The person's close mark: the engine no longer lists the pane.
     state.isPaneOpen = false
@@ -231,7 +236,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 }
 
 test('/factory-dashboard opens the pane', async ($, on) => {
-  const { state } = world(on, undefined)
+  const { state } = buildWorld(on, undefined)
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   await runDashboard($)
   expect(state.opened).toEqual(['kc-factory'])
@@ -240,7 +245,7 @@ test('/factory-dashboard opens the pane', async ($, on) => {
 const ADVANCE_TO_DELIVERING = 'bash /plugins/kc-factory/scripts/job.sh advance ABC-1 delivering'
 
 test('the first delivering stage opens the pane where it docks beside the chat', async ($, on) => {
-  const { state } = world(on, JSON.stringify([ORDER_TOTALS]))
+  const { state } = buildWorld(on, JSON.stringify([ORDER_TOTALS]))
   const band = await $.ui.mount({
     plugin: 'kc-factory',
     surface: 'terminal',
@@ -260,8 +265,22 @@ test('the first delivering stage opens the pane where it docks beside the chat',
   expect(state.opened).toEqual(['kc-factory'])
 })
 
+test('a later job write redraws a pane that is still open', async ($, on) => {
+  const { state } = buildWorld(on, JSON.stringify([{ ...ORDER_TOTALS, stage: 'ready' }]))
+  await runDashboard($)
+  const ui = await $.ui.mount({ plugin: 'kc-factory', surface: 'terminal', component: 'Pane', requestId: 'kc-factory', props: paneProps('widget') })
+  expect((await ui.find({ type: 'Text', text: /ABC-1/ }))?.text).toBe('ABC-1 ready')
+
+  // A second run: nothing is running, so no timer is going; the job write itself redraws.
+  state.index = JSON.stringify([{ ...ORDER_TOTALS, stage: 'delivering' }])
+  await $.tool.call({ tool: 'Bash', command: ADVANCE_TO_DELIVERING })
+
+  expect((await ui.find({ type: 'Text', text: /ABC-1/ }))?.text).toBe('ABC-1 delivering')
+  await ui.unmount()
+})
+
 test('the delivering stage leaves the pane closed where it would not dock', async ($, on) => {
-  const { state } = world(on, JSON.stringify([ORDER_TOTALS]))
+  const { state } = buildWorld(on, JSON.stringify([ORDER_TOTALS]))
   const band = await $.ui.mount({
     plugin: 'kc-factory',
     surface: 'terminal',

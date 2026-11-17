@@ -17,8 +17,8 @@ fail() { echo "FAIL $1"; echo "     $2"; failures=$((failures + 1)); }
 
 bash "$plugin_dir/scripts/read-config.sh" "$tests_dir/fixtures/config/minimal.json" > "$work/config.json"
 
-# intake <dir> <header lines...>: a job dir whose intake.md starts with them.
-intake() {
+# write_intake_header <dir> <header lines...>: a job dir whose intake.md starts with them.
+write_intake_header() {
   local dir=$1
   shift
   rm -rf "$dir"
@@ -30,9 +30,9 @@ intake() {
 expect_route() {
   local label=$1 config=$2 line=$3 json=$4 dir="$work/job-$1" out status=0
   shift 4
-  intake "$dir" "$@"
+  write_intake_header "$dir" "$@"
   out=$(bash "$script" "$dir" "$config" 2>&1) || status=$?
-  if [ "$status" = 0 ] && [ "$out" = "$line" ] && [ "$(jq -cS . "$dir/routing.json")" = "$(jq -cS . <<<"$json")" ]; then
+  if [ "$status" = 0 ] && [ "$out" = "$line" ] && [ "$(jq -cS . "$dir/routing.json")" = "$(jq -cS --arg line "$line" '. + {line: $line}' <<<"$json")" ]; then
     pass "$label"
   else
     fail "$label" "status $status, out: $out, routing.json: $(cat "$dir/routing.json" 2>/dev/null)"
@@ -43,7 +43,7 @@ expect_route() {
 expect_refusal() {
   local label=$1 message=$2 dir="$work/job-$1" err status=0
   shift 2
-  intake "$dir" "$@"
+  write_intake_header "$dir" "$@"
   err=$(bash "$script" "$dir" "$work/config.json" 2>&1 >/dev/null) || status=$?
   if [ "$status" = 1 ] && [ "$err" = "$message" ] && [ ! -e "$dir/routing.json" ]; then
     pass "$label"
@@ -95,6 +95,8 @@ expect_refusal "unknown risk" "route: unknown risk: extreme" \
   "DECISION: ACCEPT" "RISK: extreme" "SURFACES: none"
 expect_refusal "missing RISK line" "route: intake.md has no RISK line" \
   "DECISION: ACCEPT" "SURFACES: none"
+expect_refusal "missing SURFACES line" "route: intake.md has no SURFACES line" \
+  "DECISION: ACCEPT" "RISK: low"
 
 status=0
 err=$(bash "$script" "$work/nowhere" "$work/config.json" 2>&1 >/dev/null) || status=$?
@@ -110,7 +112,7 @@ if [ "$status" = 2 ]; then pass "no arguments is a usage error"; else fail "no a
 
 # The printed line must parse as a plan unit's Routing line.
 dir="$work/job-plan"
-intake "$dir" "DECISION: ACCEPT" "RISK: high" "SURFACES: security"
+write_intake_header "$dir" "DECISION: ACCEPT" "RISK: high" "SURFACES: security"
 line=$(bash "$script" "$dir" "$work/config.json")
 cat > "$work/plan.md" <<PLAN
 # Shop plan

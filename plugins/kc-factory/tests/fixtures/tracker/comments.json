@@ -2,7 +2,7 @@
   "comments": [
     { "author": { "displayName": "Sam Shopper" }, "created": "2026-11-16T09:00:00.000+0000",
       "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Please make this fast." }] }] } },
-    { "author": { "displayName": "Factory Bot" }, "created": "2026-11-16T10:00:00.000+0000",
+    { "id": "10002", "author": { "displayName": "Factory Bot" }, "created": "2026-11-16T10:00:00.000+0000",
       "body": { "type": "doc", "version": 1, "content": [
         { "type": "paragraph", "content": [{ "type": "text", "text": "🤖 kc-factory" }] },
         { "type": "paragraph", "content": [{ "type": "text", "text": "Should reserved stock count?" }] } ] } },

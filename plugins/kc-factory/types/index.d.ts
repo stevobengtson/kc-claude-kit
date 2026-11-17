@@ -5,7 +5,9 @@ export type JobCard = {
   key: string
   title?: string
   stage: JobStage
+  /** low, medium or high: what breaks, and for whom, if the change is wrong (intake's rating). */
   risk?: string
+  /** What the change touches, as intake named it: ui, security, data, or others. */
   surfaces?: string[]
   pr_url?: string
   reason?: string
@@ -18,7 +20,7 @@ export type JobCard = {
 
 declare module 'claude-code' {
   interface PluginState {
-    // `lastRead` is when the index was last read, as an ISO time: the "now" elapsed times count to.
-    'kc-factory': { jobs: JobCard[]; lastRead: string }
+    // `lastRead` is when the index was last read, in epoch milliseconds: the "now" elapsed times count to.
+    'kc-factory': { jobs: JobCard[]; lastRead: number }
   }
 }

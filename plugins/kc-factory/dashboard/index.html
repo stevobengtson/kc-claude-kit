@@ -47,11 +47,15 @@
 // reaches the page through textContent only, never as markup.
 var RUNNING = ["intake", "queued", "delivering"];
 var FIXED_FILES = ["intake.md", "routing.json", "tracker.log", "blocked.md", "ticket.md"];
-var MAX_FEEDBACK = 20;
+var MAX_FEEDBACK = 20;  // feedback-1.md .. feedback-20.md are probed
+var SECOND_MS = 1000;
+var SECONDS_PER_MINUTE = 60;
+var MINUTES_PER_HOUR = 60;
+var REFRESH_MS = 5000;
 var open = {};      // key -> true while its file list is expanded
 var cache = {};     // key -> [{name, text}] fetched when opened
 
-function el(tag, cls, text) {
+function makeElement(tag, cls, text) {
   var node = document.createElement(tag);
   if (cls) node.className = cls;
   if (text !== undefined) node.textContent = text;
@@ -59,13 +63,15 @@ function el(tag, cls, text) {
 }
 
 function formatElapsed(ms) {
-  var s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60);
-  if (s < 60) return s + "s";
-  if (m < 60) return m + "m";
-  return h + "h " + (m % 60) + "m";
+  var seconds = Math.floor(ms / SECOND_MS);
+  var minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  var hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  if (seconds < SECONDS_PER_MINUTE) return seconds + "s";
+  if (minutes < MINUTES_PER_HOUR) return minutes + "m";
+  return hours + "h " + (minutes % MINUTES_PER_HOUR) + "m";
 }
 
-function elapsed(job) {
+function getElapsedMs(job) {
   var start = Date.parse(job.created_at);
   var end = RUNNING.indexOf(job.stage) >= 0 ? Date.now() : Date.parse(job.updated_at);
   if (isNaN(start) || isNaN(end)) return null;
@@ -82,7 +88,7 @@ function formatCost(c, partial) {
 }
 
 // The text of a file's "## Summary" section, or null when it has none.
-function summaryOf(text) {
+function getFileSummary(text) {
   var lines = text.split("\n"), out = [], inside = false;
   for (var i = 0; i < lines.length; i++) {
     if (/^##\s+Summary\s*$/i.test(lines[i])) { inside = true; continue; }
@@ -113,17 +119,17 @@ function loadFiles(key) {
   // Directory listings are not available to a static page: probe feedback-1.md
   // upward until the first miss.
   var feedback = [];
-  function probe(n) {
+  function probeFeedbackFile(n) {
     if (n > MAX_FEEDBACK) return Promise.resolve();
     var name = "feedback-" + n + ".md";
     return fetchText(base + name).then(function (r) {
       if (r.error) failures.push(name + ": could not load (" + r.error + ")");
       if (r.text === undefined) return;
       feedback.push({ name: name, text: r.text });
-      return probe(n + 1);
+      return probeFeedbackFile(n + 1);
     });
   }
-  return Promise.all(fixed.concat([probe(1)])).then(function () {
+  return Promise.all(fixed.concat([probeFeedbackFile(1)])).then(function () {
     found.sort(function (a, b) { return FIXED_FILES.indexOf(a.name) - FIXED_FILES.indexOf(b.name); });
     var all = found.concat(feedback);
     all.failures = failures;
@@ -132,96 +138,103 @@ function loadFiles(key) {
 }
 
 function drawFiles(key, files) {
-  var box = el("div", "files");
-  (files.failures || []).forEach(function (m) { box.appendChild(el("div", "stage-blocked", m)); });
-  if (files.length === 0 && (files.failures || []).length === 0) box.appendChild(el("div", "dim", "no files yet"));
+  var box = makeElement("div", "files");
+  (files.failures || []).forEach(function (m) { box.appendChild(makeElement("div", "stage-blocked", m)); });
+  var hasNoFiles = files.length === 0;
+  var hasNoFailures = (files.failures || []).length === 0;
+  if (hasNoFiles && hasNoFailures) box.appendChild(makeElement("div", "dim", "no files yet"));
   files.forEach(function (f) {
-    var wrap = el("div", "file");
-    wrap.appendChild(el("h3", null, f.name));
-    var summary = summaryOf(f.text);
-    if (summary !== null) wrap.appendChild(el("pre", "summary", summary));
-    wrap.appendChild(el("pre", null, f.text));
+    var wrap = makeElement("div", "file");
+    wrap.appendChild(makeElement("h3", null, f.name));
+    var summary = getFileSummary(f.text);
+    if (summary !== null) wrap.appendChild(makeElement("pre", "summary", summary));
+    wrap.appendChild(makeElement("pre", null, f.text));
     box.appendChild(wrap);
   });
   return box;
 }
 
 function drawCard(job) {
-  var card = el("div", "card");
+  var card = makeElement("div", "card");
   card.tabIndex = 0;
   card.setAttribute("role", "button");
-  var head = el("div", "head");
-  head.appendChild(el("span", "key", job.key));
-  head.appendChild(el("span", "stage-" + String(job.stage).replace(/[^a-z-]/g, ""), job.stage));
-  var ms = elapsed(job);
-  if (ms !== null) head.appendChild(el("span", "dim", formatElapsed(ms)));
+  var head = makeElement("div", "head");
+  head.appendChild(makeElement("span", "key", job.key));
+  head.appendChild(makeElement("span", "stage-" + String(job.stage).replace(/[^a-z-]/g, ""), job.stage));
+  var ms = getElapsedMs(job);
+  if (ms !== null) head.appendChild(makeElement("span", "dim", formatElapsed(ms)));
   card.appendChild(head);
-  if (job.title !== undefined) card.appendChild(el("div", null, job.title));
+  if (job.title !== undefined) card.appendChild(makeElement("div", null, job.title));
   var details = [];
   if (job.risk !== undefined) details.push("risk " + job.risk);
-  if (Array.isArray(job.surfaces) && job.surfaces.length > 0) details.push(job.surfaces.join(", "));
-  var detailLine = el("div", "dim", details.length > 0 ? details.join(" · ") + " · " : "");
-  var cost = el("span", null, formatCost(job.cost_usd, job.cost_partial));
-  if (job.cost_partial === true && typeof job.cost_usd === "number") {
+  var surfaceList = Array.isArray(job.surfaces) ? job.surfaces.join(", ") : "";
+  if (surfaceList !== "") details.push(surfaceList);
+  var detailText = details.join(" · ");
+  var detailLine = makeElement("div", "dim", detailText === "" ? "" : detailText + " · ");
+  var hasPartialFlag = job.cost_partial === true;
+  var hasCostFigure = typeof job.cost_usd === "number";
+  var cost = makeElement("span", null, formatCost(job.cost_usd, hasPartialFlag));
+  if (hasPartialFlag && hasCostFigure) {
     cost.title = PARTIAL_COST_NOTE;
     cost.setAttribute("aria-label", cost.textContent + " (" + PARTIAL_COST_NOTE + ")");
   }
   detailLine.appendChild(cost);
   card.appendChild(detailLine);
-  if (job.reason !== undefined) card.appendChild(el("div", "dim", job.reason));
+  if (job.reason !== undefined) card.appendChild(makeElement("div", "dim", job.reason));
   if (job.pr_url !== undefined) {
     var url = String(job.pr_url);
     if (url.indexOf("https://") === 0) {
-      var a = el("a", null, url);
+      var a = makeElement("a", null, url);
       a.href = url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.addEventListener("click", function (e) { e.stopPropagation(); });
-      card.appendChild(el("div")).appendChild(a);
+      card.appendChild(makeElement("div")).appendChild(a);
     } else {
-      card.appendChild(el("div", "dim", url));
+      card.appendChild(makeElement("div", "dim", url));
     }
   }
   if (open[job.key] && cache[job.key]) card.appendChild(drawFiles(job.key, cache[job.key]));
-  function toggle() {
-    if (open[job.key]) { delete open[job.key]; render(lastJobs); return; }
+  function toggleJobFiles() {
+    if (open[job.key]) { delete open[job.key]; renderJobs(lastJobs); return; }
     open[job.key] = true;
-    loadFiles(job.key).then(function (files) { cache[job.key] = files; render(lastJobs); });
+    loadFiles(job.key).then(function (files) { cache[job.key] = files; renderJobs(lastJobs); });
   }
   card.addEventListener("click", function (e) {
     if (e.target.closest && e.target.closest(".files")) return;
-    toggle();
+    toggleJobFiles();
   });
   card.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleJobFiles(); }
   });
   return card;
 }
 
 var lastJobs = [];
-function render(jobs) {
+function renderJobs(jobs) {
   lastJobs = jobs;
   var cards = document.getElementById("cards");
   cards.replaceChildren();
   jobs.forEach(function (job) { cards.appendChild(drawCard(job)); });
 }
 
-function refresh() {
+function refreshJobs() {
   var status = document.getElementById("status");
   fetch("jobs/index.json", { cache: "no-store" })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(function (jobs) {
-      status.textContent = jobs.length === 0 ? "no jobs yet" : jobs.length + " job(s), refreshed every 5s";
+      var refreshText = "refreshed every " + (REFRESH_MS / SECOND_MS) + "s";
+      status.textContent = jobs.length === 0 ? "no jobs yet" : jobs.length + " job(s), " + refreshText;
       // Refresh open file lists too, so a running job's tracker.log stays current.
       return Promise.all(Object.keys(open).map(function (key) {
         return loadFiles(key).then(function (files) { cache[key] = files; });
-      })).then(function () { render(jobs); });
+      })).then(function () { renderJobs(jobs); });
     })
     .catch(function (err) { status.textContent = "cannot read jobs/index.json: " + err.message; });
 }
 
-refresh();
-setInterval(refresh, 5000);
+refreshJobs();
+setInterval(refreshJobs, REFRESH_MS);
 </script>
 </body>
 </html>

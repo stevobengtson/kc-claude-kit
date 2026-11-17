@@ -28,14 +28,10 @@ if [ ! -f "$config" ]; then
   exit 2
 fi
 
-header=$(sed -n '1,3p' "$intake")
-# header_value <NAME>: the trimmed text after "NAME:" on its header line.
-header_value() {
-  printf '%s\n' "$header" | awk -v name="$1" '
-    index($0, name ":") == 1 { v = substr($0, length(name) + 2); gsub(/^[ \t]+|[ \t\r]+$/, "", v); print v; exit }'
-}
+# shellcheck source=intake-format.sh
+. "$(dirname "$0")/intake-format.sh"
 
-risk=$(header_value RISK | tr '[:upper:]' '[:lower:]')
+risk=$(get_intake_header_value "$intake" RISK | tr '[:upper:]' '[:lower:]')
 if [ -z "$risk" ]; then
   echo "route: intake.md has no RISK line" >&2
   exit 1
@@ -46,7 +42,12 @@ case "$risk" in
 esac
 
 # Surface names: lowercased, trimmed, blanks dropped; "none" is no surfaces.
-surfaces=$(header_value SURFACES | jq -Rc '
+surfaces_text=$(get_intake_header_value "$intake" SURFACES)
+if [ -z "$surfaces_text" ]; then
+  echo "route: intake.md has no SURFACES line" >&2
+  exit 1
+fi
+surfaces=$(printf '%s\n' "$surfaces_text" | jq -Rc '
   ascii_downcase | split(",") | map(gsub("^\\s+|\\s+$"; "") | select(. != "")) | if . == ["none"] then [] else . end')
 
 # jq program: $-variables are jq's, not the shell's.
@@ -56,7 +57,8 @@ routing=$(jq -c --arg risk "$risk" --argjson surfaces "$surfaces" '
   | reduce ($surfaces[] | $r.surfaces[.] // empty) as $overlay ($r[$risk];
       . + ($overlay | with_entries(select(.key == "workers" or .key == "security")))
         + (if $overlay.personas then {personas: (.personas + $overlay.personas)} else {} end))
-  | {risk: $risk, surfaces: $surfaces} + .' "$config")
+  | {risk: $risk, surfaces: $surfaces} + .
+  | . + {line: "- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)"}' "$config")
 
 printf '%s\n' "$routing" > "$job_dir/routing.json"
-jq -r '"- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)"' <<<"$routing"
+jq -r '.line' <<<"$routing"

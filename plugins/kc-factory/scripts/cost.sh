@@ -41,7 +41,11 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
   esac
 done
-if { [ -n "$run" ] && [ -z "$unit" ]; } || { [ -z "$run" ] && [ -n "$unit" ]; }; then usage; fi
+has_run=false has_unit=false
+[ -z "$run" ] || has_run=true
+[ -z "$unit" ] || has_unit=true
+# --run and --unit come together or not at all.
+if [ "$has_run" != "$has_unit" ]; then usage; fi
 
 [ -f "$config" ] || { echo "cost: $config not found" >&2; exit 1; }
 prices=$(jq -c '.prices_usd_per_mtok // {}' "$config") || { echo "cost: $config is not valid JSON" >&2; exit 1; }
@@ -49,7 +53,15 @@ prices=$(jq -c '.prices_usd_per_mtok // {}' "$config") || { echo "cost: $config 
 
 # One summary object per transcript: whether it belongs to the job, whether a
 # line failed to parse, and its token totals per model.
-summarize='
+# The four usage counts Claude Code records per assistant message, each mapped
+# to its price key in prices_usd_per_mtok; every sum below is over these.
+token_defs='
+  def price_keys: {input_tokens: "input", output_tokens: "output", cache_creation_input_tokens: "cache_write", cache_read_input_tokens: "cache_read"};
+  # sum_counts: an array of usage objects summed field by field over price_keys.
+  def sum_counts: . as $usages | price_keys | with_entries(.key as $field | .value = ($usages | map(.[$field] // 0) | add // 0));
+'
+
+summarize=$token_defs'
   def text: if (.message.content | type) == "string" then .message.content
             elif (.message.content | type) == "array" then ([.message.content[] | select(type == "object" and .type == "text") | .text] | join("\n"))
             else "" end;
@@ -67,11 +79,7 @@ summarize='
                | {id: .message.id, model: (.message.model // "unknown"), u: .message.usage}]
               | (map(select(.id == null)) + (map(select(.id != null)) | group_by(.id) | map(to_entries | sort_by([.value.u.output_tokens // 0, .key]) | last | .value)))
               | group_by(.model)
-              | map({key: .[0].model, value: {
-                  input_tokens: (map(.u.input_tokens // 0) | add),
-                  output_tokens: (map(.u.output_tokens // 0) | add),
-                  cache_creation_input_tokens: (map(.u.cache_creation_input_tokens // 0) | add),
-                  cache_read_input_tokens: (map(.u.cache_read_input_tokens // 0) | add)}})
+              | map({key: .[0].model, value: (map(.u) | sum_counts)})
               | from_entries)
     }'
 
@@ -81,15 +89,11 @@ while IFS= read -r f; do
   jq -R -s -c --arg key "$key" --arg run "$run" --arg unit "$unit" "$summarize" "$f" >> "$summaries"
 done < <(find "$dir" -type f -name '*.jsonl' | sort)
 
-jq -s -c --argjson prices "$prices" '
-  {input_tokens: "input", output_tokens: "output", cache_creation_input_tokens: "cache_write", cache_read_input_tokens: "cache_read"} as $price_key
+jq -s -c --argjson prices "$prices" "$token_defs"'
+  price_keys as $price_key
   # tokens: the summed token counts per model of a list of transcript summaries.
   | def tokens: map(.usage) | map(to_entries) | add // [] | group_by(.key)
-      | map({key: .[0].key, value: {
-          input_tokens: (map(.value.input_tokens) | add),
-          output_tokens: (map(.value.output_tokens) | add),
-          cache_creation_input_tokens: (map(.value.cache_creation_input_tokens) | add),
-          cache_read_input_tokens: (map(.value.cache_read_input_tokens) | add)}})
+      | map({key: .[0].key, value: (map(.value) | sum_counts)})
       | from_entries;
   # unpriced: the models of a tokens object with a used count that has no price.
   def unpriced: to_entries | map(select(

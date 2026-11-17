@@ -34,17 +34,12 @@ usage() {
 }
 refuse() { echo "job: $*" >&2; exit 1; }
 
-if [ -n "${FACTORY_HOME:-}" ]; then
-  home=$FACTORY_HOME
-elif root=$(git rev-parse --show-toplevel 2>/dev/null); then
-  home="$root/.factory"
-else
-  echo "job: set FACTORY_HOME outside a git repo" >&2
-  exit 2
-fi
+# shellcheck source=factory-home.sh
+. "$(dirname "$0")/factory-home.sh"
+resolve_factory_home job
 jobs_dir="$home/jobs"
 
-now() { echo "${FACTORY_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; }
+get_timestamp() { echo "${FACTORY_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; }
 
 # Runs jq with the given arguments and replaces <dest> with its output, via a
 # temp file, only when jq succeeds: a failed jq never truncates <dest>.
@@ -70,10 +65,10 @@ rewrite_index() {
   fi
 }
 
-job_file() { echo "$jobs_dir/$1/job.json"; }
+get_job_file_path() { echo "$jobs_dir/$1/job.json"; }
 
 require_job() {
-  [ -f "$(job_file "$1")" ] || refuse "$1 has no job"
+  [ -f "$(get_job_file_path "$1")" ] || refuse "$1 has no job"
 }
 
 cmd=${1:-}
@@ -88,7 +83,7 @@ case "$cmd" in
     [ -f "$config" ] || refuse "$config not found"
     pattern=$(jq -r '"^(" + (.tracker.project_keys | join("|")) + ")-[0-9]+$"' "$config")
     printf '%s' "$key" | grep -Eq "$pattern" || refuse "$key is not a ticket key in project_keys"
-    file=$(job_file "$key")
+    file=$(get_job_file_path "$key")
     if [ -f "$file" ]; then
       existing=$(jq -r '.stage' "$file")
       case "$existing" in
@@ -98,7 +93,7 @@ case "$cmd" in
       exit 0
     fi
     mkdir -p "$jobs_dir/$key"
-    at=$(now)
+    at=$(get_timestamp)
     write_jq "$file" -n --arg key "$key" --arg at "$at" \
       '{key: $key, stage: "intake", created_at: $at, updated_at: $at, history: [{stage: "intake", at: $at}]}'
     rewrite_index
@@ -108,11 +103,11 @@ case "$cmd" in
     [ "$#" = 2 ] || usage
     key=$1 to=$2
     require_job "$key"
-    file=$(job_file "$key")
+    file=$(get_job_file_path "$key")
     from=$(jq -r '.stage' "$file")
     legal=$(printf '%s\n' "$transitions" | awk -v from="$from" -v to="$to" '$1 == from { for (i = 2; i <= NF; i++) if ($i == to) print "yes" }')
     [ "$legal" = yes ] || refuse "$key cannot move from $from to $to"
-    at=$(now)
+    at=$(get_timestamp)
     write_jq "$file" --arg to "$to" --arg at "$at" \
       '.stage = $to | .updated_at = $at | .history += [{stage: $to, at: $at}]' "$file"
     rewrite_index
@@ -126,15 +121,15 @@ case "$cmd" in
       *) refuse "$field is not a settable field" ;;
     esac
     printf '%s' "$value" | jq empty >/dev/null 2>&1 || refuse "value for $field is not valid JSON"
-    file=$(job_file "$key")
-    write_jq "$file" --arg field "$field" --argjson value "$value" --arg at "$(now)" \
+    file=$(get_job_file_path "$key")
+    write_jq "$file" --arg field "$field" --argjson value "$value" --arg at "$(get_timestamp)" \
       '.[$field] = $value | .updated_at = $at' "$file"
     rewrite_index
     ;;
   show)
     [ "$#" = 1 ] || usage
     require_job "$1"
-    cat "$(job_file "$1")"
+    cat "$(get_job_file_path "$1")"
     ;;
   list)
     [ "$#" = 0 ] || usage

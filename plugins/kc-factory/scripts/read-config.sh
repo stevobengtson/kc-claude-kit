@@ -44,7 +44,6 @@ readonly NORMALIZE='
   | ($c.routing | o) as $r
   | {
       tracker: {
-        kind: ($t.kind // "jira"),
         site: $t.site,
         project_keys: $t.project_keys,
         statuses: { in_progress: ($s.in_progress // "In Progress"), in_review: ($s.in_review // "In Review") },
@@ -96,7 +95,6 @@ readonly PROBLEMS='
         (if (.personas | personas) then empty else "\($name).personas must be integers with 1 <= min <= max" end),
         (if (.security | secure) then empty else "\($name).security must be workers or staff" end) ] | .[];
   [
-    (if .tracker.kind == "jira" then empty else "tracker.kind must be \"jira\"" end),
     (if (.tracker.site | type) == "string" and (.tracker.site | length) > 0 then empty else "tracker.site must be a non-empty string" end),
     (if (.tracker.project_keys | type) == "array" and (.tracker.project_keys | length) > 0 and all(.tracker.project_keys[]; type == "string" and test("^[A-Z][A-Z0-9]+$")) then empty else "tracker.project_keys must be a non-empty array of keys like ABC" end),
     (if (.tracker.statuses | [.in_progress, .in_review] | all(.[]; type == "string" and length > 0)) then empty else "tracker.statuses must be non-empty strings" end),

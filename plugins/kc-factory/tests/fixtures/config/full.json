@@ -1,6 +1,5 @@
 {
   "tracker": {
-    "kind": "jira",
     "site": "shop.atlassian.net",
     "project_keys": ["ABC", "WEB2"],
     "statuses": { "in_progress": "Doing", "in_review": "Review" },

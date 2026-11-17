@@ -18,14 +18,9 @@ if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
 fi
 command -v python3 >/dev/null 2>&1 || { echo "dashboard: python3 is required" >&2; exit 2; }
 
-if [ -n "${FACTORY_HOME:-}" ]; then
-  home=$FACTORY_HOME
-elif root=$(git rev-parse --show-toplevel 2>/dev/null); then
-  home="$root/.factory"
-else
-  echo "dashboard: set FACTORY_HOME outside a git repo" >&2
-  exit 2
-fi
+# shellcheck source=factory-home.sh
+. "$(dirname "$0")/factory-home.sh"
+resolve_factory_home dashboard
 
 if [ ! -f "$home/jobs/index.json" ]; then
   echo "dashboard: no .factory/jobs/index.json yet — run /kc-factory:factory first" >&2

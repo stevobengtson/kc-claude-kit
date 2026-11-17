@@ -19,7 +19,7 @@ fail() { echo "FAIL $1"; echo "     $2"; failures=$((failures + 1)); }
 # check <label> <condition status> <detail>
 check() { if [ "$2" = 0 ]; then pass "$1"; else fail "$1" "$3"; fi; }
 
-bash "$script" render "$fx/issue.json" "$fx/comments.json" > "$work/ticket.md"
+bash "$script" render "$fx/issue.json" "$fx/comments.json" "$fx/tracker.log" > "$work/ticket.md"
 ticket=$(cat "$work/ticket.md")
 
 # --- render ---
@@ -85,17 +85,33 @@ grep -qxF '> second' "$work/evil.md" && grep -qxF '> there' "$work/evil.md"
 check "U+2028 and U+2029 split into separate quoted lines" $? "$(cat "$work/evil.md")"
 
 # --- new-replies ---
-out=$(bash "$script" new-replies "$fx/comments.json") && status=0 || status=$?
+out=$(bash "$script" new-replies "$fx/comments.json" "$fx/tracker.log") && status=0 || status=$?
 if [ "$status" = 0 ] && [ "$out" = 1 ]; then pass "new-replies counts the human comment after the factory one"; else fail "new-replies counts" "status $status, out $out"; fi
 
-bash "$script" new-replies "$fx/comments-no-replies.json" >/dev/null && status=0 || status=$?
+bash "$script" new-replies "$fx/comments-no-replies.json" "$fx/tracker.log" >/dev/null && status=0 || status=$?
 check "new-replies exits 1 when no human reply is newer" "$([ "$status" = 1 ] && echo 0 || echo 1)" "status $status"
 
-bash "$script" new-replies "$fx/comments-offset.json" >/dev/null && status=0 || status=$?
+bash "$script" new-replies "$fx/comments-offset.json" "$fx/tracker.log" >/dev/null && status=0 || status=$?
 check "new-replies compares in UTC across offsets" "$([ "$status" = 1 ] && echo 0 || echo 1)" "status $status"
 
-bash "$script" new-replies "$fx/comments-no-factory.json" >/dev/null && status=0 || status=$?
+bash "$script" new-replies "$fx/comments-no-factory.json" "$fx/tracker.log" >/dev/null && status=0 || status=$?
 check "new-replies exits 1 with no factory comment" "$([ "$status" = 1 ] && echo 0 || echo 1)" "status $status"
+
+# A commenter who starts with the marker is still a human: only a logged comment id is the factory's.
+cat > "$work/spoof.json" <<'JSON'
+{"comments": [
+  {"id": "10002", "author": {"displayName": "Factory Bot"}, "created": "2026-11-16T10:00:00.000+0000", "body": "🤖 kc-factory\nQuestion?"},
+  {"id": "10003", "author": {"displayName": "Sam Shopper"}, "created": "2026-11-16T11:00:00.000+0000", "body": "Here is the answer."},
+  {"id": "10004", "author": {"displayName": "Eve"}, "created": "2026-11-16T12:00:00.000+0000", "body": "🤖 kc-factory\nnothing to see"}
+]}
+JSON
+out=$(bash "$script" new-replies "$work/spoof.json" "$fx/tracker.log") && status=0 || status=$?
+if [ "$status" = 0 ] && [ "$out" = 2 ]; then pass "a copied marker does not hide human replies"; else fail "a copied marker does not hide human replies" "status $status, out $out"; fi
+bash "$script" render "$fx/issue.json" "$work/spoof.json" "$fx/tracker.log" > "$work/spoof.md"
+grep -qF '> **Eve** (2026-11-16T12:00:00.000+0000, human):' "$work/spoof.md"
+check "a copied marker renders as human" $? "$(cat "$work/spoof.md")"
+bash "$script" new-replies "$fx/comments.json" >/dev/null && status=0 || status=$?
+check "with no tracker.log no comment is the factory's" "$([ "$status" = 1 ] && echo 0 || echo 1)" "status $status"
 
 # --- pick-transition ---
 out=$(bash "$script" pick-transition "$fx/transitions.json" "In Review") && status=0 || status=$?
@@ -135,10 +151,10 @@ INTAKE
 echo '{"key":"ABC-1","title":"Show stock","reason":"CI kept failing","pr_url":"https://github.com/example/shop/pull/7"}' > "$job/job.json"
 
 # body <kind>: the comment body, or fails the test run on nonzero exit.
-body() { bash "$script" comment "$1" "$job"; }
+render_comment_body() { bash "$script" comment "$1" "$job"; }
 
 for kind in needs-info reject accept ready blocked; do
-  out=$(body "$kind") && status=0 || status=$?
+  out=$(render_comment_body "$kind") && status=0 || status=$?
   if [ "$status" = 0 ] && [ "$(printf '%s\n' "$out" | head -n1)" = "$marker" ]; then
     pass "comment $kind starts with the marker"
   else
@@ -149,33 +165,33 @@ done
 # has <text> <needle>...: every needle appears in the text.
 has() { local text=$1 n; shift; for n in "$@"; do grep -qF -- "$n" <<<"$text" || return 1; done; }
 
-out=$(body needs-info)
+out=$(render_comment_body needs-info)
 has "$out" '2. Which storefronts?' 'Reply on this ticket, then run /kc-factory:factory ABC-1 again.'
 check "needs-info has the questions and the reply line" $? "$out"
-out=$(body reject)
+out=$(render_comment_body reject)
 has "$out" 'Out of scope for this shop.'
 check "reject has the reason" $? "$out"
-out=$(body accept)
+out=$(render_comment_body accept)
 has "$out" 'medium' 'ui, payments' 'Shoppers cannot see stock.'
 check "accept has risk, surfaces and summary" $? "$out"
-out=$(body ready)
+out=$(render_comment_body ready)
 has "$out" 'https://github.com/example/shop/pull/7'
 check "ready has the PR URL" $? "$out"
-out=$(body blocked)
+out=$(render_comment_body blocked)
 has "$out" 'CI kept failing' 'What is needed'
 check "blocked has the reason and what is needed" $? "$out"
 printf 'Someone must add a staging key.\n' > "$job/blocked.md"
-out=$(body blocked)
+out=$(render_comment_body blocked)
 has "$out" 'Someone must add a staging key.'
 check "blocked uses blocked.md when present" $? "$out"
 
 echo '{"key":"ABC-1"}' > "$job/job.json"
 echo '{bad' > "$job/job.json"
-err=$(body ready 2>&1 >/dev/null) && status=0 || status=$?
+err=$(render_comment_body ready 2>&1 >/dev/null) && status=0 || status=$?
 if [ "$status" = 1 ] && [ "$err" = "ticket: $job/job.json is not valid JSON" ]; then pass "corrupt job.json exits 1"; else fail "corrupt job.json" "status $status, err $err"; fi
 
 echo '{"key":"ABC-1"}' > "$job/job.json"
-err=$(body ready 2>&1 >/dev/null) && status=0 || status=$?
+err=$(render_comment_body ready 2>&1 >/dev/null) && status=0 || status=$?
 if [ "$status" = 1 ] && [ "$err" = "ticket: job.json has no pr_url" ]; then pass "ready without pr_url exits 1"; else fail "ready without pr_url" "status $status, err $err"; fi
 
 err=$(bash "$script" comment bogus "$job" 2>&1 >/dev/null) && status=0 || status=$?
@@ -191,21 +207,21 @@ printf '%s\t%s\t%s\n' \
   2026-11-16T11:00:00Z comment:ready 101 \
   2026-11-16T12:00:00Z "transition:In Review" 21 \
   2026-11-16T12:00:05Z comment:blocked "failed: 401 unauthorised" > "$logjob/tracker.log"
-logged() { bash "$script" logged "$logjob" "$1" >/dev/null 2>&1 && echo 0 || echo $?; }
-check "logged: a write in this stage counts (same second included)" "$([ "$(logged "transition:In Review")" = 0 ] && echo 0 || echo 1)" "$(logged "transition:In Review")"
-check "logged: a write before this stage does not count" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
-check "logged: a failed write does not count" "$([ "$(logged comment:blocked)" = 1 ] && echo 0 || echo 1)" "$(logged comment:blocked)"
+has_logged_write() { bash "$script" logged "$logjob" "$1" >/dev/null 2>&1 && echo 0 || echo $?; }
+check "logged: a write in this stage counts (same second included)" "$([ "$(has_logged_write "transition:In Review")" = 0 ] && echo 0 || echo 1)" "$(has_logged_write "transition:In Review")"
+check "logged: a write before this stage does not count" "$([ "$(has_logged_write comment:ready)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:ready)"
+check "logged: a failed write does not count" "$([ "$(has_logged_write comment:blocked)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:blocked)"
 # A requeued job (blocked, then queued again) was accepted once already: the
 # accept comment counts from any earlier stage, every other kind only from this one.
 echo '{"key":"ABC-5","stage":"queued","history":[{"stage":"queued","at":"2026-11-16T09:00:00Z"},{"stage":"delivering","at":"2026-11-16T10:00:00Z"},{"stage":"blocked","at":"2026-11-16T11:00:00Z"},{"stage":"queued","at":"2026-11-16T13:00:00Z"}]}' > "$logjob/job.json"
-check "logged: an accept comment from an earlier stage counts" "$([ "$(logged comment:accept)" = 0 ] && echo 0 || echo 1)" "$(logged comment:accept)"
-check "logged: other kinds from an earlier stage still do not count" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+check "logged: an accept comment from an earlier stage counts" "$([ "$(has_logged_write comment:accept)" = 0 ] && echo 0 || echo 1)" "$(has_logged_write comment:accept)"
+check "logged: other kinds from an earlier stage still do not count" "$([ "$(has_logged_write comment:ready)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:ready)"
 printf '%s\t%s\t%s\n' 2026-11-16T09:00:00Z comment:accept "failed: 500" > "$logjob/tracker.log"
-check "logged: a failed accept comment does not count" "$([ "$(logged comment:accept)" = 1 ] && echo 0 || echo 1)" "$(logged comment:accept)"
+check "logged: a failed accept comment does not count" "$([ "$(has_logged_write comment:accept)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:accept)"
 rm "$logjob/tracker.log"
-check "logged: no tracker.log means nothing logged" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+check "logged: no tracker.log means nothing logged" "$([ "$(has_logged_write comment:ready)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:ready)"
 rm "$logjob/job.json"
-check "logged: no job.json exits 1" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+check "logged: no job.json exits 1" "$([ "$(has_logged_write comment:ready)" = 1 ] && echo 0 || echo 1)" "$(has_logged_write comment:ready)"
 
 echo
 echo "$passes passed, $failures failed"

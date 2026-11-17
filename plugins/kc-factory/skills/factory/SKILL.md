@@ -11,6 +11,7 @@ You are a thin wrapper around `kc-autopilot:kc-run`. You fetch each named ticket
 Rules for the whole skill:
 
 - **Job state goes through `job.sh` only.** Never edit a `job.json` or `index.json` by hand. Every other file named below is yours to write.
+- **Set a job's fields before you move its stage.** The next step, or a session that resumes after a crash, reads them from the new stage, so `job.sh set` comes first and `job.sh advance` last.
 - **The tracker hears only what happened.** Post a comment or move a status only after the step it reports is done, only on keys the user named, and only when the comment's kind is in the config's `tracker.comment_on`. Post a comment's text exactly as `ticket.sh comment` printed it: its first line is the marker that tells factory comments from human replies.
 - **Never post twice.** Before each comment or status move, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh logged <job-dir> <kind>`: exit 0 means it was already made since the job entered its stage (the `accept` comment: ever, for this job), so skip it.
 - **Log every tracker write** to `<job-dir>/tracker.log`, one line each, tab-separated: UTC time, kind (`comment:<kind>` or `transition:<status>`), and the tool's response id (the comment id, or the transition id you sent), or `failed: <one-line error>`:
@@ -56,7 +57,7 @@ For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh show <KEY>`. If it exit
 | stage | do |
 |---|---|
 | `intake` | Fetch the ticket (below), then rate it in step 4. |
-| `needs-info` | Fetch the ticket. `ticket.sh new-replies <job-dir>/comments.json`: exit 0 means people replied after the factory's question, so `job.sh advance <KEY> intake` and rate it again in step 4; exit 1 means report it as still waiting for an answer on the ticket. |
+| `needs-info` | Fetch the ticket. `ticket.sh new-replies <job-dir>/comments.json <job-dir>/tracker.log`: exit 0 means people replied after the factory's question, so `job.sh advance <KEY> intake` and rate it again in step 4; exit 1 means report it as still waiting for an answer on the ticket. |
 | `blocked` | Resume it only when it has new feedback (below): `job.sh advance <KEY> queued`, and it joins step 5. Otherwise report it as waiting for feedback, and say how to give it (`/kc-factory:factory feedback for <KEY>: …`). |
 | `queued` | Left by a session that ended before delivery. Ask the user to confirm no other session is delivering it; on their yes it joins step 5 as it is, otherwise skip it. |
 | `delivering` | Left by a session that ended during a run. Read `.factory/runs/<run_id>/autopilot-run-dir` (`run_id` from `job.sh show`). If that file names a dir with a `result.json`, go to section 6 for that run. If not (no file, no dir or no result), ask the user to confirm no workflow of that run is still going (`/workflows`); on their yes, go to section 6 with no result. Either way, once per run, for every key of it. |
@@ -65,13 +66,13 @@ For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh show <KEY>`. If it exit
 
 **Fetch the ticket** into the job dir as Jira Cloud REST v3 JSON, the shapes `ticket.sh` reads:
 - `issue.json`: the issue with `key`, `self` (its API URL, which `ticket.sh` takes the site from; build `https://<tracker.site>/rest/api/3/issue/<id>` if the tool leaves it out), `fields.summary`, `fields.status.name` and `fields.description` (Atlassian document format or plain text).
-- `comments.json`: `{"comments": [...]}`, each with `author.displayName`, `created` and `body`. Use the issue's `fields.comment` when there is no separate comments tool.
+- `comments.json`: `{"comments": [...]}`, each with `id`, `author.displayName`, `created` and `body`. A comment is the factory's only when its id is one `tracker.log` records, so keep each comment's id. Use the issue's `fields.comment` when there is no separate comments tool.
 - `transitions.json`: `{"transitions": [{"id", "name", "to": {"name"}}]}`. Fetch it when a transition is next, not before.
 
 Save what the tool returned; when its shape differs, write those fields in the shape above, and never add or change their text. Then:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh render <job-dir>/issue.json <job-dir>/comments.json > <job-dir>/ticket.md
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh render <job-dir>/issue.json <job-dir>/comments.json <job-dir>/tracker.log > <job-dir>/ticket.md
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh set <KEY> title "$(jq '.fields.summary' <job-dir>/issue.json)"
 ```
 
@@ -81,7 +82,7 @@ The `title` is the tracker's summary, for display only: the pane and the browser
 
 ## 4. Intake
 
-Dispatch one intake agent per job in `intake`, all in one message, each in the background: the Agent tool with `subagent_type: "kc-factory:intake"`, and `model` from the config's `intake.model`. `haiku`, `sonnet` and `opus` pass as they are; `best` passes `opus`, the most capable model the Agent tool names by alias; a `claude-*` id passes its family alias (`claude-sonnet-…` passes `sonnet`). The prompt is exactly:
+First remove each such job's `intake.md` and `routing.json` if they are there (from an earlier intake): a missing file is how a failed intake shows below. Then dispatch one intake agent per job in `intake`, all in one message, each in the background: the Agent tool with `subagent_type: "kc-factory:intake"`, and `model` from the config's `intake.model`. `haiku`, `sonnet` and `opus` pass as they are; `best` passes `opus`, the most capable model the Agent tool names by alias; a `claude-*` id passes its family alias (`claude-sonnet-…` passes `sonnet`). The prompt is exactly:
 
 ```
 Job folder: <absolute job dir>/
@@ -123,23 +124,22 @@ jq --argjson n "$(jq '.concurrency' .factory/config.json)" '.limits.max_parallel
 Then for each planned job, with `<Uid>` its unit id from `map.json`:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh advance <KEY> delivering
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh set <KEY> run_id '"<run_id>"'
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh set <KEY> unit '"<Uid>"'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh advance <KEY> delivering
 ```
 
 Tell the user in one line which keys go to autopilot, then invoke the `kc-autopilot:kc-run` skill with the arguments `<repo>/.factory/runs/<run_id>/plan.md --config <repo>/.factory/runs/<run_id>/autopilot.json`, in this same turn, and follow it. kc-run starts the deliver workflow and ends the turn; its step 6 runs when the workflow's completion notification arrives. Note the autopilot run dir it uses (`<repo>/.autopilot/runs/<autopilot_run_id>`) and write that path to `.factory/runs/<run_id>/autopilot-run-dir`.
 
-**If nothing can start** (`plan.sh` refuses, or kc-run stops before starting the workflow: a precondition, or an objection that spans every unit), every job of this run goes to blocked: save the error or kc-run's message as each job's `blocked.md`, then `job.sh advance <KEY> blocked`, `job.sh set <KEY> reason` with a one-sentence reason as a JSON string, and post the `blocked` comment. Report and stop.
+**If nothing can start** (`plan.sh` refuses, or kc-run stops before starting the workflow: a precondition, or an objection that spans every unit), every job of this run goes to blocked: save the error or kc-run's message as each job's `blocked.md`, then `job.sh set <KEY> reason` with a one-sentence reason as a JSON string, `job.sh advance <KEY> blocked`, and post the `blocked` comment. Report and stop.
 
 ## 6. On completion
 
 Continue here in the same turn, once kc-run's step 6 has written its report:
 
 1. Copy kc-run's `result.json`, and its `dropped.json` when there is one, from the autopilot run dir into `.factory/runs/<run_id>/`. When the workflow ended in an error, or the run was never started, there is no `result.json`: copy only `dropped.json`, if any.
-2. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/apply-result.sh <repo>/.factory/runs/<run_id>`, adding `--no-result` when there is no `result.json` (every unit not dropped is then blocked, reason "no result from the autopilot run"). It moves each job to `ready` or `blocked` and prints `KEY<TAB>stage<TAB>pr_url-or-reason` per unit. Warnings about skipped jobs go into your report. If it exits 1, report its error and that the jobs are still `delivering`; running the command again for those keys retries this step. Post nothing for them.
+2. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/apply-result.sh <repo>/.factory/runs/<run_id>`, adding `--no-result` when there is no `result.json` (every unit not dropped is then blocked, reason "no result from the autopilot run"). It records each unit's branch, then moves each job of this run to `ready` (only with a PR) or `blocked` (always with a reason) and prints `KEY<TAB>stage<TAB>pr_url-or-reason` per unit. Warnings about skipped jobs go into your report. If it exits 1, report its error and that the jobs are still `delivering`; running the command again for those keys retries this step. Post nothing for them.
 3. For each line:
-   - Record the unit's `branch` from `result.json` when it has one: `job.sh set <KEY> branch '"<branch>"'`.
    - `ready`: move the ticket to `tracker.statuses.in_review`, then post the `ready` comment.
    - `blocked`: write what the user must decide for that unit (from kc-run's report, in plain words; from the reason alone when there is no report) to `<job-dir>/blocked.md`, then post the `blocked` comment. The ticket's status stays as it is.
 4. Cost per job: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cost.sh <KEY> "" .factory/config.json --run <autopilot run dir> --unit <Uid>` prints JSON whose `usd` is a number or `null` (unknown, never a guess) and whose `partial` says whether agents the whole run shared (review prep, gates, triage, shipping) were left out; their price is then `run_overhead_usd`. Without a known autopilot run dir, leave out `--run` and `--unit` (intake only). `job.sh set <KEY> cost_usd <usd>` with that value as it is, `null` included, and `job.sh set <KEY> cost_partial <partial>`. If `cost.sh` exits nonzero (no transcripts dir, say), set `cost_usd` to `null` and `cost_partial` to `false`. Cost is API-equivalent spend, not a bill, and covers this run and the job's intake; a partial cost is a lower bound, shown as `$X+`.
@@ -155,8 +155,8 @@ Answer from the job store; read before you write. `job.sh list` prints every job
 - **Status, "what needs me".** Each job's stage and what it waits for: `needs-info` waits on an answer on the ticket; `blocked` on feedback; `ready` on a review of its PR.
 - **Why a job stopped.** Quote `intake.md`'s `## Questions` or `## Reason`, or the job's `reason` and `blocked.md`.
 - **Cost.** `cost_usd` from `job.sh show`, `unknown` when it is `null` or missing, and `$X+` (agents shared across the run not included) when `cost_partial` is true.
-- **Feedback for a blocked job.** Write the user's words, verbatim, to `<job-dir>/feedback-<n>.md` (`<n>` as in step 3), and tell them `/kc-factory:factory <KEY>` resumes it. Only a `blocked` job takes feedback; a `needs-info` job takes its answers on the ticket.
-- **Reject a parked job** (`needs-info` or `blocked`), only when the user asks for that key. `job.sh set <KEY> reason` with their reason as a JSON string, `job.sh advance <KEY> rejected`, post the `reject` comment (the Tracker precondition applies), and when the job has a `pr_url`, `gh pr close <pr_url>`.
+- **Feedback for a blocked job.** Empty feedback is refused: ask what the job should change. Otherwise add the user's words, verbatim, to `<job-dir>/feedback-<n>.md` (`<n>` as in step 3): create it, or, when it is already there, append them after a blank line so earlier feedback for this block is kept. Then tell them `/kc-factory:factory <KEY>` resumes it. Only a `blocked` job takes feedback; a `needs-info` job takes its answers on the ticket.
+- **Reject a parked job** (`needs-info` or `blocked`), only when the user asks for that key. `job.sh set <KEY> reason` with their reason as a JSON string, then `job.sh advance <KEY> rejected`, post the `reject` comment (the Tracker precondition applies), and when the job has a `pr_url`, `gh pr close <pr_url>`.
 - **The dashboard.** `/factory-dashboard` opens the factory pane beside the chat.
 
 Anything else that would change a job (moving a stage, posting on a ticket, deleting a job) is not a free-form action: say what the user can run instead.
