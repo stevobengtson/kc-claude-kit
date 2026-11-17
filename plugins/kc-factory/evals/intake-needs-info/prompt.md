@@ -1,5 +1,5 @@
 ---
-plugins: ["../.."]
+plugins: ["../..", "../../../kc-autopilot", "../../../kc-gates", "../../../kc-conventions", "../../../kc-verify"]
 allowed_tools: [Read, Glob, Grep, Agent, Write]
 max_turns: 20
 timeout_seconds: 600

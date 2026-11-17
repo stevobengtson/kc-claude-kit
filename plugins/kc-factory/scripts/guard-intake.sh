@@ -3,7 +3,8 @@
 # That agent reads hostile ticket text, and what it writes is posted back to the
 # ticket, so it gets the least it needs:
 #   - Write, Edit, MultiEdit: only a file named intake.md directly inside
-#     <repo>/.factory/jobs/<KEY>/.
+#     <repo>/.factory/jobs/<KEY>/, or <session folder>/.factory/jobs/<KEY>/
+#     when the session runs below the repo top.
 #   - Read, Glob: only inside the repo, and never a secret-looking path
 #     (.env*, *.pem, *.key, id_*, .ssh/, .aws/, .netrc, *credentials*, *secret*,
 #     .git/). Glob patterns may not be absolute or use "..".
@@ -123,6 +124,8 @@ resolve_real_path() {
 
 root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || root=$cwd
 root=$(resolve_real_path "$(normalize_path "$root" /)") || deny "cannot resolve the repo root"
+# The session's own folder: a session started below the repo top keeps its .factory there.
+session_dir=$(resolve_real_path "$(normalize_path "$cwd" /)") || deny "cannot resolve the session folder"
 
 # is_inside_repo_root <real path>: is it the repo root or under it?
 is_inside_repo_root() {
@@ -189,6 +192,7 @@ case "$tool" in
     is_intake_file=false is_in_jobs_dir=false is_ticket_key=false
     [ "${resolved##*/}" != intake.md ] || is_intake_file=true
     [ "${job_dir%/*}" != "$root/.factory/jobs" ] || is_in_jobs_dir=true
+    [ "${job_dir%/*}" != "$session_dir/.factory/jobs" ] || is_in_jobs_dir=true
     [[ ! $key =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]] || is_ticket_key=true
     if [ "$is_intake_file" = true ] && [ "$is_in_jobs_dir" = true ] && [ "$is_ticket_key" = true ]; then
       exit 0

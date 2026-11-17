@@ -107,6 +107,17 @@ check deny  "Bash"                                 "$(build_hook_payload $I Bash
 check deny  "WebFetch"                             "$(build_hook_payload $I WebFetch '{"url":"https://shop.example.com"}')"
 check deny  "an MCP tool"                          "$(build_hook_payload $I mcp__tracker__addComment '{"body":"x"}')"
 
+# A session started below the repo top keeps its .factory there; the intake may write its intake.md.
+mkdir -p "$repo/shop-web/.factory/jobs/ABC-3"
+sub_payload() { # <tool> <file_path>: a hook input whose cwd is the repo's shop-web folder
+  jq -cn --arg tool "$1" --arg path "$2" --arg cwd "$repo/shop-web" \
+    '{hook_event_name:"PreToolUse",tool_name:$tool,tool_input:{file_path:$path},cwd:$cwd,agent_type:"kc-factory:intake"}'
+}
+check allow "write intake.md under the session folder's .factory" "$(sub_payload Write "$repo/shop-web/.factory/jobs/ABC-3/intake.md")"
+check allow "a relative write from the session folder"           "$(sub_payload Write ".factory/jobs/ABC-3/intake.md")"
+check deny  "another file under the session folder's job dir"    "$(sub_payload Write "$repo/shop-web/.factory/jobs/ABC-3/ticket.md")"
+check deny  "a .factory in some other folder of the repo"        "$(sub_payload Write "$repo/site/.factory/jobs/ABC-3/intake.md")"
+
 # Other agents and the main session pass untouched.
 check allow "another agent writes anywhere"        "$(build_hook_payload kc-autopilot:engineer Write "$(build_path_input file_path "$repo/site/category.html")")"
 check allow "the main session reads .env"          "$(build_hook_payload "" Read "$(build_path_input file_path "$repo/.env")")"
