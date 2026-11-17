@@ -157,6 +157,7 @@ function drawFiles(key, files) {
 function drawCard(job) {
   var card = makeElement("div", "card");
   card.tabIndex = 0;
+  card.dataset.key = job.key;
   card.setAttribute("role", "button");
   var head = makeElement("div", "head");
   head.appendChild(makeElement("span", "key", job.key));
@@ -211,11 +212,21 @@ function drawCard(job) {
 }
 
 var lastJobs = [];
+// Every redraw replaces the cards, so the card that had keyboard focus gets it back.
+function restoreFocus(container, focusedKey) {
+  if (focusedKey === null) return;
+  var match = Array.prototype.find.call(container.children, function (child) { return child.dataset.key === focusedKey; });
+  if (match) match.focus();
+}
+
 function renderJobs(jobs) {
   lastJobs = jobs;
   var cards = document.getElementById("cards");
+  var active = document.activeElement;
+  var focusedKey = active && active.dataset && active.dataset.key !== undefined ? active.dataset.key : null;
   cards.replaceChildren();
   jobs.forEach(function (job) { cards.appendChild(drawCard(job)); });
+  restoreFocus(cards, focusedKey);
 }
 
 function refreshJobs() {

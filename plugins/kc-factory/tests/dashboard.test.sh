@@ -137,6 +137,22 @@ if command -v node >/dev/null 2>&1; then
     fail "page: a partial cost is \$X+" "$costs"
   fi
 fi
+# A redraw gives keyboard focus back to the card that had it.
+if command -v node >/dev/null 2>&1; then
+  refocused=$(node -e '
+    const page = require("fs").readFileSync(process.argv[1], "utf8");
+    const fn = page.match(/function restoreFocus\(container, focusedKey\) \{[\s\S]*?\n\}/)[0];
+    const restoreFocus = new Function(fn + "; return restoreFocus;")();
+    const focused = [];
+    const card = key => ({ dataset: { key }, focus: () => focused.push(key) });
+    const container = { children: [card("ABC-1"), card("ABC-2")] };
+    restoreFocus(container, "ABC-2");
+    restoreFocus(container, null);
+    restoreFocus(container, "ABC-9");
+    console.log(focused.join(","));
+  ' "$plugin_dir/dashboard/index.html" 2>&1) || true
+  if [ "$refocused" = "ABC-2" ]; then pass "page: a redraw refocuses the card that had focus"; else fail "page: a redraw refocuses the card that had focus" "$refocused"; fi
+fi
 if grep -q 'cost.title = PARTIAL_COST_NOTE' "$plugin_dir/dashboard/index.html" \
   && grep -q 'var PARTIAL_COST_NOTE = "agents shared across the run not included"' "$plugin_dir/dashboard/index.html"; then
   pass "page: a partial cost's tooltip says what it leaves out"
