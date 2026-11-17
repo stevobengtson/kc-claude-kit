@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Serves the browser dashboard: copies dashboard/index.html into FACTORY_HOME
-# (default <repo>/.factory, as job.sh resolves it) and serves that folder on
-# localhost only, so the page can read jobs/index.json and each job's files.
+# Serves the browser dashboard on localhost only. FACTORY_HOME (default
+# <repo>/.factory, as job.sh resolves it) is never served whole: dashboard-server.py
+# serves the plugin's own page and an allowlist of job files under jobs/.
 #
 # Usage: dashboard.sh [port]     (default 8765)
 # Exit: 0 server stopped; 1 no jobs yet ("dashboard: <problem>" on stderr);
@@ -32,9 +32,7 @@ if [ ! -f "$home/jobs/index.json" ]; then
   exit 1
 fi
 
-page_dir=$(cd "$(dirname "$0")/../dashboard" && pwd)
-cp "$page_dir/index.html" "$home/index.html"
+here=$(cd "$(dirname "$0")" && pwd)
 
 echo "dashboard: http://127.0.0.1:$port/"
-cd "$home"
-exec python3 -m http.server "$port" --bind 127.0.0.1
+exec python3 -I "$here/dashboard-server.py" "$port" "$home" "$here/../dashboard/index.html"

@@ -88,16 +88,22 @@ function summaryOf(text) {
   return summary === "" ? null : summary;
 }
 
+// Resolves to {text} on 200, {missing} on 404, {error} on anything else.
 function fetchText(path) {
-  return fetch(path, { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : null; })
-    .catch(function () { return null; });
+  return fetch(path, { cache: "no-store" }).then(function (r) {
+    if (r.ok) return r.text().then(function (t) { return { text: t }; });
+    return r.status === 404 ? { missing: true } : { error: "HTTP " + r.status };
+  }).catch(function (e) { return { error: e.message }; });
 }
 
 function loadFiles(key) {
   var base = "jobs/" + encodeURIComponent(key) + "/";
-  var found = [];
+  var found = [], failures = [];
   var fixed = FIXED_FILES.map(function (name) {
-    return fetchText(base + name).then(function (t) { if (t !== null) found.push({ name: name, text: t }); });
+    return fetchText(base + name).then(function (r) {
+      if (r.text !== undefined) found.push({ name: name, text: r.text });
+      else if (r.error) failures.push(name + ": could not load (" + r.error + ")");
+    });
   });
   // Directory listings are not available to a static page: probe feedback-1.md
   // upward until the first miss.
@@ -105,21 +111,25 @@ function loadFiles(key) {
   function probe(n) {
     if (n > MAX_FEEDBACK) return Promise.resolve();
     var name = "feedback-" + n + ".md";
-    return fetchText(base + name).then(function (t) {
-      if (t === null) return;
-      feedback.push({ name: name, text: t });
+    return fetchText(base + name).then(function (r) {
+      if (r.error) failures.push(name + ": could not load (" + r.error + ")");
+      if (r.text === undefined) return;
+      feedback.push({ name: name, text: r.text });
       return probe(n + 1);
     });
   }
   return Promise.all(fixed.concat([probe(1)])).then(function () {
     found.sort(function (a, b) { return FIXED_FILES.indexOf(a.name) - FIXED_FILES.indexOf(b.name); });
-    return found.concat(feedback);
+    var all = found.concat(feedback);
+    all.failures = failures;
+    return all;
   });
 }
 
 function drawFiles(key, files) {
   var box = el("div", "files");
-  if (files.length === 0) box.appendChild(el("div", "dim", "no files yet"));
+  (files.failures || []).forEach(function (m) { box.appendChild(el("div", "stage-blocked", m)); });
+  if (files.length === 0 && (files.failures || []).length === 0) box.appendChild(el("div", "dim", "no files yet"));
   files.forEach(function (f) {
     var wrap = el("div", "file");
     wrap.appendChild(el("h3", null, f.name));
