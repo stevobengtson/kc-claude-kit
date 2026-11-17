@@ -107,6 +107,8 @@ The `Job folder:` line comes first: the cost script finds the job's transcripts 
 
 If no job is `queued`, report (section 7) and stop. Otherwise:
 
+**Free a resumed job's earlier branch first.** For each queued job that came back from `blocked` (it has a `feedback-<n>.md`), its last unit's worktree was kept, and git cannot check that branch out a second time. Take the unit's `worktree` from `.factory/runs/<old_run_id>/result.json`, where `<old_run_id>` and the unit id are `job.sh show`'s `run_id` and `unit` (still the earlier run's), and when it names a directory that exists, `bash <autopilot_root>/scripts/worktree.sh remove <repo> <worktree>`; the branch and its commits are kept. If it refuses (uncommitted changes there), leave that job out of this run, still `queued`, and tell the user the worktree path: commit or discard those changes, then run `/kc-factory:factory <KEY>` again.
+
 ```bash
 run_id=$(date +%Y%m%d-%H%M%S)
 mkdir -p .factory/runs && mkdir .factory/runs/$run_id   # fails if it exists: wait a second, pick a new run_id
@@ -116,16 +118,7 @@ jq --argjson n "$(jq '.concurrency' .factory/config.json)" '.limits.max_parallel
 
 `plan.sh` writes `plan.md` (one unit per job, in the order given) and `map.json` (each unit's key), and checks the plan with autopilot's validator. If it refuses, the jobs cannot be delivered: block them as in "If nothing can start" below, with its error as `blocked.md`.
 
-**Resumed jobs.** For each job that came back from `blocked`, append to `plan.md` (its `## Notes` section is last):
-
-```
-### <KEY> feedback
-Resume <KEY> from its kept branch `<branch>` (worktree `<worktree>`): build on the work there instead of starting over.
-Feedback from the user, quoted:
-> <each line of every feedback-<n>.md for this job, oldest first, each prefixed "> ">
-```
-
-`<branch>` is `job.sh show`'s `branch`; `<worktree>` is that unit's `worktree` in `.factory/runs/<its old run_id>/result.json` (leave out the worktree part when there is none). Then check the plan again: `bash <autopilot_root>/scripts/validate-plan.sh <plan.md> > /dev/null` exits 0.
+**Resumed jobs** need nothing more from you: `plan.sh` puts every `feedback-<n>.md` of the job, oldest first and flattened to one line, into its unit's `- Scope:` line as `Feedback from the reviewer: …`, followed by `An earlier attempt is on branch <branch>; start from its commits where they are sound.` when `job.sh show` has a `branch`. Every autopilot worker of that unit is sent the Scope line. kc-run names the unit's branch as it names any other; a new name starts from the base branch with the engineer pointed at the earlier one, and the earlier name checks that branch out again with its commits, now that its worktree is gone.
 
 Then for each planned job, with `<Uid>` its unit id from `map.json`:
 
