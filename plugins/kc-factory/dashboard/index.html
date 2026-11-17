@@ -62,6 +62,12 @@ function makeElement(tag, cls, text) {
   return node;
 }
 
+// A PR URL becomes a link only when it is an https:// string; anything else
+// (javascript:, http:, a non-string from agent output) is shown as text.
+function safeUrl(url) {
+  return typeof url === "string" && url.indexOf("https://") === 0 ? url : null;
+}
+
 function formatElapsed(ms) {
   var seconds = Math.floor(ms / SECOND_MS);
   var minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
@@ -184,9 +190,10 @@ function drawCard(job) {
   if (job.reason !== undefined) card.appendChild(makeElement("div", "dim", job.reason));
   if (job.pr_url !== undefined) {
     var url = String(job.pr_url);
-    if (url.indexOf("https://") === 0) {
-      var a = makeElement("a", null, url);
-      a.href = url;
+    var linkUrl = safeUrl(job.pr_url);
+    if (linkUrl !== null) {
+      var a = makeElement("a", null, linkUrl);
+      a.href = linkUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.addEventListener("click", function (e) { e.stopPropagation(); });

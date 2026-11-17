@@ -149,6 +149,8 @@ if [ "$status" != 0 ] && [ "$(cat "$home/jobs/ABC-1/job.json")" = '{broken' ]; t
 else
   fail "corrupt job.json: set fails and leaves the file unchanged" "status $status, file: $(cat "$home/jobs/ABC-1/job.json")"
 fi
+leftovers=$(find "$home/jobs" -type f \( -name 'job.json.*' -o -name 'index.json.*' \))
+if [ -z "$leftovers" ]; then pass "a failed write leaves no temp file"; else fail "a failed write leaves no temp file" "$leftovers"; fi
 
 fresh_home edge
 run_job_script create ABC-1 "$work/config.json" >/dev/null
@@ -201,10 +203,11 @@ if [ "$(run_job_script list | head -1)" = "$(printf 'ABC-1\tintake\tFix checkout
 else
   fail "list: shows a set title" "$(run_job_script list)"
 fi
-if [ -z "$(find "$home/jobs" -name '*.tmp*')" ]; then
+leftovers=$(find "$home/jobs" -type f \( -name 'job.json.*' -o -name 'index.json.*' \))
+if [ -z "$leftovers" ]; then
   pass "no temp files left behind"
 else
-  fail "no temp files left behind" "$(find "$home/jobs" -name '*.tmp*')"
+  fail "no temp files left behind" "$leftovers"
 fi
 
 echo

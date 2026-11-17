@@ -69,6 +69,9 @@ check allow "read a relative path in the repo"     "$(build_hook_payload $I Read
 check deny  "read .env"                            "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/.env")")"
 check deny  "read a nested .env.local"             "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/config/.env.local")")"
 check deny  "read a .pem"                          "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/certs/server.pem")")"
+for secret_path in .aws/config deploy/db.key home/id_rsa .netrc notes/secret-plan.txt .ssh/known_hosts; do
+  check deny "read $secret_path" "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/$secret_path")")"
+done
 check deny  "read a credentials file"              "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/deploy/credentials.json")")"
 check deny  "read .git/config"                     "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/.git/config")")"
 check deny  "read an innocent name linked to .env" "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/site/settings.txt")")"
@@ -108,6 +111,26 @@ check deny  "an MCP tool"                          "$(build_hook_payload $I mcp_
 check allow "another agent writes anywhere"        "$(build_hook_payload kc-autopilot:engineer Write "$(build_path_input file_path "$repo/site/category.html")")"
 check allow "the main session reads .env"          "$(build_hook_payload "" Read "$(build_path_input file_path "$repo/.env")")"
 check allow "another agent runs Bash"              "$(build_hook_payload kc-factory:other Bash '{"command":"ls"}')"
+
+# A symlink loop cannot be resolved, so it is refused.
+ln -s "$repo/site/loop-b" "$repo/site/loop-a"
+ln -s "$repo/site/loop-a" "$repo/site/loop-b"
+check deny  "read through a symlink loop"          "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/site/loop-a")")"
+
+# Without jq the intake agent is refused, and anyone else passes.
+no_jq_path="$tmp/no-jq-bin"
+mkdir -p "$no_jq_path"
+for tool in bash cat git printf tr readlink; do
+  tool_path=$(command -v "$tool") && ln -s "$tool_path" "$no_jq_path/$tool"
+done
+no_jq_check() { # <allow|deny> <label> <payload>
+  local output verdict
+  output=$(printf '%s' "$3" | PATH="$no_jq_path" bash "$guard")
+  if [ -z "$output" ]; then verdict=allow; elif printf '%s' "$output" | grep -q '"permissionDecision":"deny"'; then verdict=deny; else verdict="unexpected: $output"; fi
+  if [ "$verdict" = "$1" ]; then echo "ok   $2"; passes=$((passes + 1)); else echo "FAIL $2"; echo "     expected $1, got $verdict"; failures=$((failures + 1)); fi
+}
+no_jq_check deny  "no jq: intake is refused"            "$(build_hook_payload $I Read "$(build_path_input file_path "$repo/site/category.html")")"
+no_jq_check allow "no jq: another agent passes"          "$(build_hook_payload kc-autopilot:engineer Read "$(build_path_input file_path "$repo/site/category.html")")"
 
 # Fails closed for the intake agent on input it cannot read.
 check deny  "unreadable input from intake"         '{"agent_type":"kc-factory:intake", nope'
