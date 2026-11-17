@@ -8,7 +8,12 @@
 #                                                     than the newest factory one
 #   ticket.sh pick-transition <transitions.json> <status name>
 #   ticket.sh comment <needs-info|reject|accept|ready|blocked> <job-dir>
-# Exit: 0 ok; 1 nothing to report (new-replies) or a missing input
+#   ticket.sh logged <job-dir> <kind>                 is a tracker write of <kind>
+#                                                     (comment:<k> or transition:<status>)
+#                                                     in <job-dir>/tracker.log, not failed,
+#                                                     at or after the job entered its stage?
+# Exit: 0 ok (logged: it is); 1 nothing to report (new-replies), not logged
+# (logged), or a missing input
 # ("ticket: <problem>" on stderr); 2 jq missing or a usage error; 3 no
 # transition matches (pick-transition lists the available names on stderr).
 set -euo pipefail
@@ -16,7 +21,7 @@ set -euo pipefail
 command -v jq >/dev/null 2>&1 || { echo "ticket: jq is required" >&2; exit 2; }
 
 usage() {
-  echo "ticket: usage: ticket.sh render <issue.json> <comments.json> | new-replies <comments.json> | pick-transition <transitions.json> <status> | comment <kind> <job-dir>" >&2
+  echo "ticket: usage: ticket.sh render <issue.json> <comments.json> | new-replies <comments.json> | pick-transition <transitions.json> <status> | comment <kind> <job-dir> | logged <job-dir> <kind>" >&2
   exit 2
 }
 die() { echo "ticket: $1" >&2; exit 1; }
@@ -212,6 +217,21 @@ cmd_comment() {
   esac
 }
 
+# tracker.log lines are "<UTC time>\t<kind>\t<response id or failed: ...>", in
+# job.sh's time format, so times compare as strings.
+cmd_logged() {
+  [ "$#" -eq 2 ] || usage
+  local dir=$1 kind=$2 since
+  need_file "$dir/job.json"
+  since=$(jq -r '(.history // [] | last | .at) // .updated_at // empty' "$dir/job.json") \
+    || die "$dir/job.json is not valid JSON"
+  [ -n "$since" ] || die "$dir/job.json has no stage time"
+  [ -f "$dir/tracker.log" ] || return 1
+  awk -F '\t' -v kind="$kind" -v since="$since" '
+    $2 == kind && $1 >= since && $3 !~ /^failed:/ { found = 1 }
+    END { exit found ? 0 : 1 }' "$dir/tracker.log"
+}
+
 [ "$#" -ge 1 ] || usage
 sub=$1
 shift
@@ -220,5 +240,6 @@ case "$sub" in
   new-replies) cmd_new_replies "$@" ;;
   pick-transition) cmd_pick_transition "$@" ;;
   comment) cmd_comment "$@" ;;
+  logged) cmd_logged "$@" ;;
   *) usage ;;
 esac

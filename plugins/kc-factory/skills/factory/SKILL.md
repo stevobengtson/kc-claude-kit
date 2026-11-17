@@ -12,6 +12,7 @@ Rules for the whole skill:
 
 - **Job state goes through `job.sh` only.** Never edit a `job.json` or `index.json` by hand. Every other file named below is yours to write.
 - **The tracker hears only what happened.** Post a comment or move a status only after the step it reports is done, only on keys the user named, and only when the comment's kind is in the config's `tracker.comment_on`. Post a comment's text exactly as `ticket.sh comment` printed it: its first line is the marker that tells factory comments from human replies.
+- **Never post twice.** Before each comment or status move, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh logged <job-dir> <kind>`: exit 0 means it was already made since the job entered its stage, so skip it.
 - **Log every tracker write** to `<job-dir>/tracker.log`, one line each, tab-separated: UTC time, kind (`comment:<kind>` or `transition:<status>`), and the tool's response id (the comment id, or the transition id you sent), or `failed: <one-line error>`:
   ```bash
   printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<kind>" "<id or failed: …>" >> "<job-dir>/tracker.log"
@@ -36,6 +37,8 @@ Run every check even after one fails (skip only a check that needs a value a fai
 - **Factory config.** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-config.sh .claude/factory.json` exits 0. Missing: tell the user to run `/kc-factory:kc-init`. Invalid: print its errors.
 - **Keys in the project.** Each key's prefix is in the config's `tracker.project_keys`. Name every key that is not, and the configured keys.
 - **Autopilot.** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/plugin-root.sh ${CLAUDE_PLUGIN_ROOT} kc-autopilot` exits 0; note the path it prints as `autopilot_root` (installed plugins live in versioned folders, so never guess it). On exit 1, tell the user to install `kc-autopilot`. Then `bash <autopilot_root>/scripts/read-config.sh .claude/autopilot.json` exits 0; if it is missing, tell the user to run `/kc-factory:kc-init` (it sets up autopilot too).
+- **kc-gates.** `bash <autopilot_root>/scripts/plugin-root.sh <autopilot_root> kc-gates` exits 0; on exit 1, tell the user to install `kc-gates` (kc-run's review needs it).
+- **Ignored run files.** `git check-ignore -q .autopilot/x && git check-ignore -q .claude/worktrees/x` succeeds; otherwise tell the user to run `/kc-factory:kc-init` (autopilot's setup adds them to `.gitignore`).
 - **Committed setup.** `git ls-files --error-unmatch .claude/factory.json .claude/autopilot.json .gitignore` succeeds and `git check-ignore -q .factory/x` succeeds. Otherwise tell the user to commit them (`/kc-factory:kc-init` offers to); kc-run's worktrees need both configs, and an unignored `.factory/` fails its clean-tree check.
 - **Clean and current, GitHub.** The same as kc-run's step 1 (`<autopilot_root>/skills/kc-run/SKILL.md`), without `--base` or `--dry-run`: `base` is the `origin` default branch, the current branch is `base`, `git status --porcelain --untracked-files=all` prints nothing, `git fetch origin <base>` then `git rev-parse HEAD` equals `git rev-parse origin/<base>`, and `gh auth status` succeeds. Checked here so nothing reaches the tracker before kc-run would refuse.
 - **Tracker.** The session must have Jira tools from an Atlassian connector; the plugin ships none. They are often deferred: load them first with ToolSearch (search `jira issue`, `jira comment`, `jira transition`). You need tools that get an issue, list its comments, list its transitions, transition it, and add a comment; common names are `getJiraIssue`, `getTransitionsForJiraIssue`, `transitionJiraIssue` and `addCommentToJiraIssue`, but use whatever this session has. Read the first key's issue as the check. If there are no Jira tools, or the read fails as unauthorised or unknown site, tell the user to connect an Atlassian connector (`/mcp` in the CLI, or the connector settings in the desktop app) and run the command again.
@@ -48,13 +51,15 @@ mkdir -p .factory && bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-config.sh .claude/f
 
 ## 3. Each key: create or resume its job
 
-For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh create <KEY> .factory/config.json` prints the job dir (an absolute path; note it). If it refuses because the job is `queued` or `delivering`, report that the key is already in a run and skip it. Then `job.sh show <KEY>` and act on its `stage`:
+For each key, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh show <KEY>`. If it exits 1 (no job yet), `job.sh create <KEY> .factory/config.json` prints the new job's dir and `show` again; an existing job's dir is `<repo>/.factory/jobs/<KEY>`. Note the dir and act on the `stage`. A job found in `ready`, `blocked`, `needs-info`, `rejected` or `queued` first gets any tracker write its stage owes and that `ticket.sh logged` does not show (a session that died between the move and the post): `ready` the `in_review` move and the `ready` comment, `blocked` the `blocked` comment, `needs-info` and `rejected` their comments, `queued` the `accept` comment and the `in_progress` move.
 
 | stage | do |
 |---|---|
 | `intake` | Fetch the ticket (below), then rate it in step 4. |
 | `needs-info` | Fetch the ticket. `ticket.sh new-replies <job-dir>/comments.json`: exit 0 means people replied after the factory's question, so `job.sh advance <KEY> intake` and rate it again in step 4; exit 1 means report it as still waiting for an answer on the ticket. |
 | `blocked` | Resume it only when it has new feedback (below): `job.sh advance <KEY> queued`, and it joins step 5. Otherwise report it as waiting for feedback, and say how to give it (`/kc-factory:factory feedback for <KEY>: …`). |
+| `queued` | Left by a session that ended before delivery. Ask the user to confirm no other session is delivering it; on their yes it joins step 5 as it is, otherwise skip it. |
+| `delivering` | Left by a session that ended during a run. Read `.factory/runs/<run_id>/autopilot-run-dir` (`run_id` from `job.sh show`). If that file names a dir with a `result.json`, go to section 6 for that run. If not (no file, no dir or no result), ask the user to confirm no workflow of that run is still going (`/workflows`); on their yes, go to section 6 with no result. Either way, once per run, for every key of it. |
 | `ready` | Report its `pr_url`. Do nothing else. |
 | `rejected` | Report it with its reason, and say that deleting `.factory/jobs/<KEY>/` lets it run again. |
 
@@ -136,13 +141,13 @@ Tell the user in one line which keys go to autopilot, then invoke the `kc-autopi
 
 Continue here in the same turn, once kc-run's step 6 has written its report:
 
-1. Copy kc-run's `result.json`, and its `dropped.json` when there is one, from the autopilot run dir into `.factory/runs/<run_id>/`.
-2. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/apply-result.sh <repo>/.factory/runs/<run_id>` moves each job to `ready` or `blocked` and prints `KEY<TAB>stage<TAB>pr_url-or-reason` per unit. Warnings about skipped jobs go into your report.
+1. Copy kc-run's `result.json`, and its `dropped.json` when there is one, from the autopilot run dir into `.factory/runs/<run_id>/`. When the workflow ended in an error, or the run was never started, there is no `result.json`: copy only `dropped.json`, if any.
+2. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/apply-result.sh <repo>/.factory/runs/<run_id>`, adding `--no-result` when there is no `result.json` (every unit not dropped is then blocked, reason "no result from the autopilot run"). It moves each job to `ready` or `blocked` and prints `KEY<TAB>stage<TAB>pr_url-or-reason` per unit. Warnings about skipped jobs go into your report. If it exits 1, report its error and that the jobs are still `delivering`; running the command again for those keys retries this step. Post nothing for them.
 3. For each line:
    - Record the unit's `branch` from `result.json` when it has one: `job.sh set <KEY> branch '"<branch>"'`.
    - `ready`: move the ticket to `tracker.statuses.in_review`, then post the `ready` comment.
-   - `blocked`: write what the user must decide for that unit (from kc-run's report, in plain words) to `<job-dir>/blocked.md`, then post the `blocked` comment. The ticket's status stays as it is.
-4. Cost per job: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cost.sh <KEY> "" .factory/config.json --run <autopilot run dir> --unit <Uid>` prints JSON whose `usd` is a number or `null` (unknown, never a guess). `job.sh set <KEY> cost_usd <usd>` with that value as it is, `null` included. Cost is API-equivalent spend, not a bill, and covers this run and the job's intake.
+   - `blocked`: write what the user must decide for that unit (from kc-run's report, in plain words; from the reason alone when there is no report) to `<job-dir>/blocked.md`, then post the `blocked` comment. The ticket's status stays as it is.
+4. Cost per job: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cost.sh <KEY> "" .factory/config.json --run <autopilot run dir> --unit <Uid>` prints JSON whose `usd` is a number or `null` (unknown, never a guess). Without a known autopilot run dir, leave out `--run` and `--unit` (intake only). `job.sh set <KEY> cost_usd <usd>` with that value as it is, `null` included. Cost is API-equivalent spend, not a bill, and covers this run and the job's intake.
 
 ## 7. Report
 

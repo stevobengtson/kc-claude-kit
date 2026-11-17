@@ -6,7 +6,10 @@
 # blocked and records the reason. Writes only through job.sh. A job that is not
 # delivering is skipped with a warning.
 #
-# Usage: apply-result.sh <run-dir>
+# Usage: apply-result.sh <run-dir> [--no-result]
+# --no-result: the run ended with no result.json (the workflow failed, or its
+# session died); every unit not in dropped.json is blocked. Refused when
+# result.json exists, so a real result is never ignored.
 # Prints KEY<TAB>stage<TAB>pr_url-or-reason per unit, in map.json order.
 # Exit: 0 applied; 1 refused ("apply-result: <problem>" on stderr); 2 jq missing
 # or a usage error. Jobs live at $FACTORY_HOME/jobs/<KEY>/ (default <repo>/.factory).
@@ -15,10 +18,13 @@
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "apply-result: jq is required" >&2; exit 2; }
-if [ "$#" != 1 ]; then
-  echo "apply-result: usage: apply-result.sh <run-dir>" >&2
-  exit 2
-fi
+usage() { echo "apply-result: usage: apply-result.sh <run-dir> [--no-result]" >&2; exit 2; }
+no_result=false
+case "$#" in
+  1) ;;
+  2) [ "$2" = --no-result ] || usage; no_result=true ;;
+  *) usage ;;
+esac
 run_dir=$1
 refuse() { echo "apply-result: $*" >&2; exit 1; }
 
@@ -29,9 +35,15 @@ map="$run_dir/map.json"
 result="$run_dir/result.json"
 dropped="$run_dir/dropped.json"
 [ -f "$map" ] || refuse "$map not found"
-[ -f "$result" ] || refuse "$result not found"
+if [ "$no_result" = true ]; then
+  [ ! -e "$result" ] || refuse "--no-result given but $result exists"
+  result_json='{"units": []}'
+else
+  [ -f "$result" ] || refuse "$result not found"
+  jq -e '(.units | type) == "array"' "$result" >/dev/null 2>&1 || refuse "$result has no units array"
+  result_json=$(cat "$result")
+fi
 jq -e 'type == "object"' "$map" >/dev/null 2>&1 || refuse "$map is not a JSON object"
-jq -e '(.units | type) == "array"' "$result" >/dev/null 2>&1 || refuse "$result has no units array"
 if [ -f "$dropped" ]; then
   jq -e 'type == "array"' "$dropped" >/dev/null 2>&1 || refuse "$dropped is not a JSON array"
   dropped_json=$(cat "$dropped")
@@ -40,7 +52,7 @@ else
 fi
 
 # One row per unit in map order: unit, key, status, text (PR url or reason).
-rows=$(jq -r --slurpfile result "$result" --argjson dropped "$dropped_json" '
+rows=$(jq -r --argjson result "[$result_json]" --argjson dropped "$dropped_json" '
   . as $map
   | [keys_unsorted[] | {id: ., n: (ltrimstr("U") | tonumber? // 0)}] | sort_by(.n) | map(.id) as $order
   | $order[] as $id

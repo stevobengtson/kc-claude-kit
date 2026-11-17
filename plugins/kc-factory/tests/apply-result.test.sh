@@ -65,6 +65,30 @@ else
   fail "skips a job that is not delivering and applies the rest" "status $status out=$out err=$(cat "$work/err")"
 fi
 
+# --no-result: the run ended with no result.json, so every unit not dropped is blocked.
+fresh_home "$home"
+rm -rf "$work/noresult"; mkdir -p "$work/noresult"
+cp "$fx/map.json" "$fx/dropped.json" "$work/noresult/"
+status=0
+out=$(FACTORY_HOME="$home" bash "$script" "$work/noresult" --no-result 2>"$work/err") || status=$?
+if [ "$status" = 0 ] && [ "$(stage_of "$home" ABC-1)" = blocked ] && [ "$(field_of "$home" ABC-1 reason)" = "no result from the autopilot run" ] \
+  && [ "$(field_of "$home" ABC-3 reason)" = "overlaps U1 on the cart" ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 4 ]; then
+  pass "--no-result blocks every unit, keeping dropped reasons"
+else
+  fail "--no-result blocks every unit, keeping dropped reasons" "status $status out=$out err=$(cat "$work/err")"
+fi
+cp "$fx/result.json" "$work/noresult/"
+status=0
+err=$(FACTORY_HOME="$home" bash "$script" "$work/noresult" --no-result 2>&1 >/dev/null) || status=$?
+if [ "$status" = 1 ] && [ "$err" = "apply-result: --no-result given but $work/noresult/result.json exists" ]; then
+  pass "--no-result refuses when result.json exists"
+else
+  fail "--no-result refuses when result.json exists" "status $status, err $err"
+fi
+status=0
+bash "$script" "$run" --bogus >/dev/null 2>&1 || status=$?
+if [ "$status" = 2 ]; then pass "unknown flag exits 2"; else fail "unknown flag exits 2" "status $status"; fi
+
 # Refusals.
 status=0
 FACTORY_HOME="$home" bash "$script" "$work/nowhere" >/dev/null 2>"$work/err" || status=$?

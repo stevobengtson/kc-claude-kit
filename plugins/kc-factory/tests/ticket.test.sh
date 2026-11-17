@@ -181,6 +181,25 @@ if [ "$status" = 1 ] && [ "$err" = "ticket: job.json has no pr_url" ]; then pass
 err=$(bash "$script" comment bogus "$job" 2>&1 >/dev/null) && status=0 || status=$?
 check "unknown comment kind is a usage error" "$([ "$status" = 2 ] && echo 0 || echo 1)" "status $status, err $err"
 
+# --- logged ---
+# A tracker write counts when it is logged, not failed, at or after the job entered its stage.
+logjob="$work/ABC-5"
+mkdir -p "$logjob"
+echo '{"key":"ABC-5","stage":"ready","history":[{"stage":"delivering","at":"2026-11-16T10:00:00Z"},{"stage":"ready","at":"2026-11-16T12:00:00Z"}]}' > "$logjob/job.json"
+printf '%s\t%s\t%s\n' \
+  2026-11-16T09:00:00Z comment:accept 100 \
+  2026-11-16T11:00:00Z comment:ready 101 \
+  2026-11-16T12:00:00Z "transition:In Review" 21 \
+  2026-11-16T12:00:05Z comment:blocked "failed: 401 unauthorised" > "$logjob/tracker.log"
+logged() { bash "$script" logged "$logjob" "$1" >/dev/null 2>&1 && echo 0 || echo $?; }
+check "logged: a write in this stage counts (same second included)" "$([ "$(logged "transition:In Review")" = 0 ] && echo 0 || echo 1)" "$(logged "transition:In Review")"
+check "logged: a write before this stage does not count" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+check "logged: a failed write does not count" "$([ "$(logged comment:blocked)" = 1 ] && echo 0 || echo 1)" "$(logged comment:blocked)"
+rm "$logjob/tracker.log"
+check "logged: no tracker.log means nothing logged" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+rm "$logjob/job.json"
+check "logged: no job.json exits 1" "$([ "$(logged comment:ready)" = 1 ] && echo 0 || echo 1)" "$(logged comment:ready)"
+
 echo
 echo "$passes passed, $failures failed"
 [ "$failures" = 0 ]
