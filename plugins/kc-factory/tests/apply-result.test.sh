@@ -47,6 +47,21 @@ if [ "$(stage_of "$home" ABC-3)" = blocked ] && [ "$(field_of "$home" ABC-3 reas
 if [ "$(stage_of "$home" ABC-4)" = blocked ] && [ "$(field_of "$home" ABC-4 reason)" = "no result from the autopilot run" ]; then pass "unit missing from both files is blocked"; else fail "unit missing from both files is blocked" "$(cat "$home/jobs/ABC-4/job.json")"; fi
 if jq -e 'length == 4' "$home/jobs/index.json" >/dev/null 2>&1; then pass "writes go through job.sh (index rewritten)"; else fail "writes go through job.sh (index rewritten)" "no index"; fi
 
+# The PR or reason is recorded before the stage moves: a set that fails leaves
+# the job delivering, so a rerun applies it again rather than leaving a ready
+# job with no pr_url. job.sh is swapped for one whose set always fails.
+fresh_home "$home"
+mkdir -p "$work/failing-set/scripts"
+cp "$script" "$work/failing-set/scripts/apply-result.sh"
+printf '#!/usr/bin/env bash\n[ "$1" != set ] || { echo "job: disk full" >&2; exit 1; }\nexec bash %q "$@"\n' "$plugin_dir/scripts/job.sh" > "$work/failing-set/scripts/job.sh"
+status=0
+FACTORY_HOME="$home" bash "$work/failing-set/scripts/apply-result.sh" "$run" >/dev/null 2>&1 || status=$?
+if [ "$status" != 0 ] && [ "$(stage_of "$home" ABC-1)" = delivering ] && [ "$(stage_of "$home" ABC-2)" = delivering ]; then
+  pass "a failing set leaves the stage unchanged"
+else
+  fail "a failing set leaves the stage unchanged" "status $status, ABC-1 $(stage_of "$home" ABC-1), ABC-2 $(stage_of "$home" ABC-2)"
+fi
+
 # No dropped.json: treated as empty, so U3 is done.
 fresh_home "$home"
 rm "$run/dropped.json"

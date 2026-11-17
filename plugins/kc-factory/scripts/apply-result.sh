@@ -71,13 +71,15 @@ while IFS=$'\t' read -r _ key outcome text; do
     echo "apply-result: skipping $key, it is ${stage:-not a job} and not delivering" >&2
     continue
   fi
+  # The PR or reason first, then the stage: a failure between the two leaves
+  # the job delivering, which a rerun applies again, never a ready job with no PR.
   if [ "$outcome" = "done" ]; then
-    bash "$job" advance "$key" ready
     bash "$job" set "$key" pr_url "$(jq -n --arg v "$text" '$v')"
+    bash "$job" advance "$key" ready
     printf '%s\t%s\t%s\n' "$key" ready "$text"
   else
-    bash "$job" advance "$key" blocked
     bash "$job" set "$key" reason "$(jq -n --arg v "$text" '$v')"
+    bash "$job" advance "$key" blocked
     printf '%s\t%s\t%s\n' "$key" blocked "$text"
   fi
 done <<<"$rows"
