@@ -49,6 +49,15 @@ kc-claude-kit/
     │   ├── hooks/hooks.json                # PreToolUse guard for kc-autopilot:* agents
     │   ├── scripts/*.sh                    # guard, read-config, validate-plan, worktree, boot-app, run-checks, qa-browser, pr-body, ...
     │   └── tests/                          # script runners, workflow syntax and simulation; e2e/ is manual and costs money
+    ├── kc-factory/
+    │   ├── .claude-plugin/plugin.json      # depends on kc-autopilot
+    │   ├── skills/                         # factory (the orchestrator), kc-init (user-invoked setup)
+    │   ├── agents/intake.md                # rates one ticket
+    │   ├── scripts/*.sh                    # read-config, job, ticket, route, plan, apply-result, cost, dashboard
+    │   ├── scripts/dashboard-server.py     # the localhost page's server
+    │   ├── hooks/ , dashboard/             # the pane (a mod) and the browser page
+    │   ├── tests/                          # script runners and the pane test
+    │   └── evals/                          # the four intake cases
     ├── kc-verify/                          # kc-ui, kc-ux and kc-e2e skills
     ├── kc-instructions/                    # kc-audit skill; the claude- prefix is reserved
     ├── kc-usage-band/                      # mod
@@ -150,6 +159,33 @@ Measured on Claude Code 2.1.292 unless stated.
 **Stacks use GitHub's native API, with a fallback.** Units that depend on each other are linked as stacked pull requests through the REST API ([stacks](https://docs.github.com/en/rest/pulls/stacks)), pinned to an API version, not through a `gh` subcommand whose behaviour varies with the installed version. Any failure leaves a plain base-branch chain and says so in the report; nothing is merged to make a stack linear.
 
 **Cost is real and measured, not estimated.** A 2-unit dry run on the fixture in `plugins/kc-autopilot/tests/e2e/` cost about $6 to $8 and 8 to 12 minutes, with roughly 75 to 110 agents. That path is manual, not in CI, for the reason evals are on demand: it spends model calls.
+
+### kc-factory: a thin wrapper around kc-run
+
+**The pipeline.** `/kc-factory:factory ABC-1 [ABC-2 ...]` takes each ticket through five steps: the `intake` agent reads the ticket and answers ACCEPT, NEEDS-INFO or REJECT with a risk (low, medium, high) and the surfaces it touches; `route.sh` turns risk and surfaces into a `- Routing:` plan line from the config's table; `plan.sh` writes one autopilot plan with one unit per accepted ticket; `kc-autopilot:kc-run` builds, reviews, QAs and opens the PRs; `apply-result.sh` reads kc-run's `result.json` and the factory comments on and moves the ticket. Any other text after the command is a free-form question or request about the jobs (status, why a job stopped, feedback for a blocked one, reject a parked one); a key inside a sentence never starts a run.
+
+**Why it wraps kc-run.** Building, review, QA and shipping already exist and are measured in kc-autopilot. The factory adds only what is about tickets: reading them safely, choosing how much care each deserves, keeping the tracker current and remembering each job. It sends tickets in as an ordinary plan, so a fix to autopilot reaches the factory with no change here, and the factory never builds, reviews or QAs anything itself. kc-autopilot's `plugin-root.sh` finds a sibling plugin for any calling plugin, which is how the factory locates autopilot and autopilot locates kc-gates, whatever the install layout.
+
+**Every job ends in one of four places, and nothing merges.** A job is a folder with a `job.json`, moved only by `job.sh`, which refuses an illegal move. The stages and legal moves:
+
+| From | To |
+|---|---|
+| `intake` | `needs-info`, `rejected`, `queued` |
+| `needs-info` | `intake` (the author replied), `rejected` |
+| `queued` | `delivering`, `blocked` |
+| `delivering` | `ready`, `blocked` |
+| `blocked` | `queued` (the user gave feedback), `rejected` |
+| `ready`, `rejected` | none: finished |
+
+A job ends at a ready PR (`ready`), a question on the ticket (`needs-info`), a rejection with its reason (`rejected`) or a block that waits for the user (`blocked`). A person reviews and merges every PR. Ticket text is data: it reaches an agent only through a quoted `ticket.md`, and the intake agent can write only its own `intake.md`. Each comment and status move is logged in `tracker.log` and checked against it first, so a session that dies and restarts never posts twice.
+
+**Where state lives.** Config is `.claude/factory.json` (tracker site, project keys, status names, which comments to post, concurrency, the routing table, the intake model), written by `/kc-factory:kc-init` and committed. Everything else is `.factory/`, git-ignored: `jobs/<KEY>/` (the job state, the fetched ticket, `intake.md`, `routing.json`, `tracker.log`, comments, feedback) and `runs/<run_id>/` (each run's plan, its autopilot config copy and a copy of kc-run's result). The state is files on purpose: a session that ends mid-run resumes from them, and the dashboard needs nothing else.
+
+**The tracker is the session's own connector.** The plugin ships no Atlassian connection and stores no credentials; the skill uses whatever Jira tools the session already has from the person's own Atlassian connector. Without one it stops before any write and says how to connect one.
+
+**The dashboard.** `/factory-dashboard` opens a pane beside the chat from `jobs/index.json`, which `job.sh` rewrites after every change; the pane refreshes only while it is open and a job can still change. The command is not namespaced because a mod's commands never are, and `/dashboard` is built into Claude Code. For a full browser tab, `bash <plugin>/scripts/dashboard.sh [port]` (default 8765) serves a page on `127.0.0.1` only. It serves the plugin's own page and a fixed allowlist of job files, never the factory folder as a whole, and refuses a request whose `Host` header is not the local address, which stops a web page from reading it through DNS rebinding.
+
+**Held by.** Each script has a runner in `plugins/kc-factory/tests/`, the pane has `kc-factory.test.tsx`, and four intake cases (accept, needs-info, reject, injection) are under `evals/`; they run real agents, so they are committed without a `proof.json` until run on a sandboxed machine.
 
 ### Versioning
 

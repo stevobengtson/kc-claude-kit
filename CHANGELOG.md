@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (tickets in, ready PRs out)
+
+- `kc-factory` 0.1.0: a new plugin that takes tracker tickets to ready pull requests. `/kc-factory:factory ABC-1 ABC-2` has an intake agent rate each ticket (accept, needs-info or reject, with a risk and surfaces), turns the rating into a `- Routing:` line, builds one autopilot plan, runs `kc-autopilot:kc-run`, and comments on and moves each ticket; every job ends at a ready PR, a question, a rejection or a block, and nothing merges. `/kc-factory:kc-init` sets a repo up, job state lives in the git-ignored `.factory/`, and Jira is reached only through the session's own Atlassian connector. `/factory-dashboard` opens a pane beside the chat, and `scripts/dashboard.sh` serves the same page on localhost. The class: a hand-off between a tracker and a build pipeline that depends on someone retyping or remembering state; other cases are a release checklist copied by hand into a pipeline, a support queue triaged by memory, an alert that opens work nobody records. Held by the script tests under `plugins/kc-factory/tests/` and the pane test `kc-factory.test.tsx`. The four intake eval cases are committed without `proof.json` yet: they run real agents and need a sandboxed machine.
+
+### Changed (any plugin can find its sibling)
+
+- `kc-autopilot` 0.3.3: `scripts/plugin-root.sh` finds a sibling plugin for any calling plugin, not only autopilot's own, so `kc-factory` locates `kc-autopilot` the way autopilot locates `kc-gates`. The class: a lookup written for its first caller; other cases are a config reader that assumes one app's folder, a path helper hard-wired to one package name. Held by `plugins/kc-autopilot/tests/plugin-root.test.sh`.
+
+### Changed (eval runs can write files)
+
+- `scripts/run-changed-evals.sh` grants Write to eval runs: an agent's Write tool is gated by `claude plugin eval`, so a case whose agent must write a file failed without it. The class: a tool an agent needs that the harness holds back unless asked; other cases are a CI job that lacks a token its step reads, a sandbox that blocks a path a test writes. Held by `scripts/tests/run-changed-evals.test.sh`. No plugin changed for this line.
+
 ### Changed (a unit's objection no longer stops the rest)
 
 - `kc-autopilot` 0.3.2: a plan unit may carry an optional `- Routing: workers=<model>; personas=<min>-<max>; security=<workers|staff>` line; `validate-plan.sh` parses it, `validate-units.sh` checks each unit's persona count against its own range, and `deliver.js` routes that unit's worker model, persona minimum and security-lens model. `kc-run` drops only the units a design objection concerns (new `scripts/drop-units.sh` prints the plan without them and without criteria only they cover, and records them in `dropped.json`), carries on with the rest, and reports each dropped unit as `blocked:plan-conflict` (a unit that depends on a dropped one goes with it as `skipped`); an objection spanning every unit still stops the run. `kc-run` also takes `--config <path>` (default `.claude/autopilot.json`) for a per-run config copy. The class: one bad part rejecting the whole batch; other cases are a bulk import that aborts on one bad row, a CI matrix that cancels every job when one fails, a migration that rolls back all tables for one. Held by `plugins/kc-autopilot/tests/drop-units.test.sh` (kc-run's partial-drop text), plus the validate-plan, validate-units and deliver tests for the routing line.
