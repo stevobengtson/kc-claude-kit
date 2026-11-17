@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests scripts/plan.sh: units, plan-wide criteria numbering, map.json, the
+# Tests scripts/plan.sh, and through it the intake-format.sh and factory-home.sh it sources: units, plan-wide criteria numbering, map.json, the
 # plan passing validate-plan.sh, no ticket text, and refusals writing nothing.
 # The expect_refusal setups are command strings run by eval, so they stay single-quoted.
 # shellcheck disable=SC2016

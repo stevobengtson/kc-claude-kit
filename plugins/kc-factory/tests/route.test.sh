@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests scripts/route.sh: risk rows, surface overlays, routing.json, the
+# Tests scripts/route.sh, and through it the intake-format.sh it sources: risk rows, surface overlays, routing.json, the
 # printed Routing line, and refusals on a bad intake header.
 set -euo pipefail
 

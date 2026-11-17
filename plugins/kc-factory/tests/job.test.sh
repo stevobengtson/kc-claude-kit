@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests scripts/job.sh: create, legal and illegal stage moves, field
+# Tests scripts/job.sh, and through it the factory-home.sh it sources: create, legal and illegal stage moves, field
 # whitelist, history, and the index.json the dashboard reads.
 set -euo pipefail
 
