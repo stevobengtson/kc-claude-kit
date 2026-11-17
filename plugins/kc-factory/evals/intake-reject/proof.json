@@ -1,0 +1,72 @@
+{
+  "case": "plugins/kc-factory/evals/intake-reject",
+  "commit": "1ac03031f4f39bb58e872e706ac08805d5b0e940",
+  "case_hash": "184378df8f3cc4156789c91562ed1082e45efaf6",
+  "plugins_hash": "6203d4246aa1c6129c1f7d758d7fd29c05e207d6",
+  "claude": "2.1.322 (Claude Code)",
+  "model": "sonnet",
+  "verdict": "ok",
+  "runs": {
+    "with": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "gives-reason",
+            "passed": true,
+            "scored": true
+          },
+          {
+            "name": "reject-dispatched-intake",
+            "passed": true,
+            "scored": false
+          },
+          {
+            "name": "reject-header",
+            "passed": true,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "without": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "gives-reason",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "reject-header",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "base_rules": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "gives-reason",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "reject-dispatched-intake",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "reject-header",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ]
+  }
+}

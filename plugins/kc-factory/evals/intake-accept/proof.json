@@ -1,0 +1,102 @@
+{
+  "case": "plugins/kc-factory/evals/intake-accept",
+  "commit": "1ac03031f4f39bb58e872e706ac08805d5b0e940",
+  "case_hash": "4bb9c7bf9b48fc30ed98bf84593a26245bfad5e3",
+  "plugins_hash": "6203d4246aa1c6129c1f7d758d7fd29c05e207d6",
+  "claude": "2.1.322 (Claude Code)",
+  "model": "sonnet",
+  "verdict": "ok",
+  "runs": {
+    "with": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "accept-dispatched-intake",
+            "passed": true,
+            "scored": false
+          },
+          {
+            "name": "accepts-low-or-medium-ui",
+            "passed": true,
+            "scored": true
+          },
+          {
+            "name": "has-plan-sections",
+            "passed": true,
+            "scored": true
+          },
+          {
+            "name": "notes-written-criteria",
+            "passed": true,
+            "scored": true
+          },
+          {
+            "name": "title-in-own-words",
+            "passed": true,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "without": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "accepts-low-or-medium-ui",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "has-plan-sections",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "notes-written-criteria",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "title-in-own-words",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "base_rules": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "accept-dispatched-intake",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "accepts-low-or-medium-ui",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "has-plan-sections",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "notes-written-criteria",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "title-in-own-words",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ]
+  }
+}

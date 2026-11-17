@@ -1,0 +1,72 @@
+{
+  "case": "plugins/kc-factory/evals/intake-needs-info",
+  "commit": "1ac03031f4f39bb58e872e706ac08805d5b0e940",
+  "case_hash": "e22a2af24202db787e8e117a106c1e7c11f45f9d",
+  "plugins_hash": "6203d4246aa1c6129c1f7d758d7fd29c05e207d6",
+  "claude": "2.1.322 (Claude Code)",
+  "model": "sonnet",
+  "verdict": "ok",
+  "runs": {
+    "with": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "asks-numbered-questions",
+            "passed": true,
+            "scored": true
+          },
+          {
+            "name": "needs-info-dispatched-intake",
+            "passed": true,
+            "scored": false
+          },
+          {
+            "name": "needs-info-header",
+            "passed": true,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "without": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "asks-numbered-questions",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "needs-info-header",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ],
+    "base_rules": [
+      {
+        "error": null,
+        "graders": [
+          {
+            "name": "asks-numbered-questions",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "needs-info-dispatched-intake",
+            "passed": false,
+            "scored": true
+          },
+          {
+            "name": "needs-info-header",
+            "passed": false,
+            "scored": true
+          }
+        ]
+      }
+    ]
+  }
+}
