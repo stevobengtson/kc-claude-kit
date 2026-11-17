@@ -6,7 +6,8 @@
 #     scope) equal the plan's;
 #   - criteria ids are exactly the unit's covers, statements copied verbatim;
 #   - every check has kind test|ui|data and a non-empty how;
-#   - personas: limits.qa_personas.min..max, each with name, goals and
+#   - personas: limits.qa_personas.min..max (or the plan unit's routing
+#     personas range when it has one), each with name, goals and
 #     behaviour, names unique (the workflow keys QA results by name);
 #   - contract.branch is a plain branch name, unique across units, and
 #     contract.pr_title is non-empty (both in the repo's own convention).
@@ -39,14 +40,12 @@ readonly PROBLEMS='
   | ($plan | obj | .criteria | arr | map({key: .id, value: .statement}) | from_entries) as $statements
   | ($plan | obj | .units | arr) as $planUnits
   | ($config | obj | .limits | obj | .qa_personas | obj) as $qa
-  | $qa.min as $min
-  | $qa.max as $max
   | [
       (if ($u | type) != "object" then "units.json must be a JSON object" else empty end),
       (if ($u | type) == "object" and ($u.architecture | nonempty | not) then "architecture must be a non-empty string" else empty end),
       (if ($u | type) == "object" and ($u.architecture | nonempty) and ($u.architecture | test("Design review") | not) then "architecture has no Design review section (see run step 2)" else empty end),
       (if ($u | type) == "object" and ($u.units | type) != "array" then "units must be an array" else empty end),
-      (if ($min | type) != "number" or ($max | type) != "number" then "config has no limits.qa_personas min and max; pass read-config.sh output" else empty end),
+      (if ($qa.min | type) != "number" or ($qa.max | type) != "number" then "config has no limits.qa_personas min and max; pass read-config.sh output" else empty end),
       (if ($u | type) == "object" and ($u.units | type) == "array" then
         ($u.units | map(select(type == "object"))) as $units
         | (if ($units | map(.contract.branch? // empty) | (unique | length) != length)
@@ -56,7 +55,7 @@ readonly PROBLEMS='
           ($units[] | . as $unit
             | ($planUnits | map(select(.id == $unit.id))[0]) as $p
             | select($p != null)
-            | (["index", "title", "depends_on", "covers", "scope"][] | select($unit[.] != $p[.]) | "\($unit.id) \(.) differs from the plan"),
+            | (["index", "title", "depends_on", "covers", "scope", "routing"][] | select($unit[.] != $p[.]) | "\($unit.id) \(.) differs from the plan"),
               (if ($unit.contract | type) != "object" or ($unit.contract.criteria | type) != "array" or ($unit.contract.personas | type) != "array"
                 then "\($unit.id) contract must be an object with criteria and personas arrays"
                 else
@@ -71,8 +70,13 @@ readonly PROBLEMS='
                           then "\($unit.id) \($c.id) check.kind must be test, ui or data" else empty end),
                         (if ($c.check.how? // null | nonempty | not)
                           then "\($unit.id) \($c.id) check.how must be a non-empty string" else empty end)),
-                    (if ($min | type) == "number" and ($max | type) == "number" and (($personas | length) < $min or ($personas | length) > $max)
-                      then "\($unit.id) has \($personas | length) personas; limits.qa_personas allows \($min) to \($max)" else empty end),
+                    # A routing range on the unit wins over the config range.
+                    (([($p.routing.personas? // empty | {range: ., source: "its routing"}), {range: $qa, source: "limits.qa_personas"}] | first) as $limit
+                      | ($personas | length) as $count
+                      | (($limit.range.min | type) == "number" and ($limit.range.max | type) == "number") as $has_range
+                      | ($count < $limit.range.min or $count > $limit.range.max) as $out_of_range
+                      | select($has_range and $out_of_range)
+                      | "\($unit.id) has \($count) personas; \($limit.source) allows \($limit.range.min) to \($limit.range.max)"),
                     ($personas | to_entries[]
                       | select((.value | type) != "object" or ([.value.name, .value.goals, .value.behaviour] | all(nonempty) | not))
                       | "\($unit.id) persona \(.key + 1) needs non-empty name, goals and behaviour"),

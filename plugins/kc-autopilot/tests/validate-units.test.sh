@@ -16,10 +16,10 @@ failures=0
 pass() { echo "ok   $1"; passes=$((passes + 1)); }
 fail() { echo "FAIL $1"; echo "     $2"; failures=$((failures + 1)); }
 
-# expect_ok <label> <units.json> [config.json]
+# expect_ok <label> <units.json> [config.json [plan.json]]
 expect_ok() {
-  local label=$1 units=$2 config=${3:-$fixtures/config.json} status=0
-  bash "$script" "$units" "$config" "$fixtures/plan.json" >/dev/null 2>"$work/stderr" || status=$?
+  local label=$1 units=$2 config=${3:-$fixtures/config.json} plan=${4:-$fixtures/plan.json} status=0
+  bash "$script" "$units" "$config" "$plan" >/dev/null 2>"$work/stderr" || status=$?
   if [ "$status" = 0 ] && ! grep -q . "$work/stderr"; then
     pass "$label"
   else
@@ -27,11 +27,11 @@ expect_ok() {
   fi
 }
 
-# expect_error <label> <units.json> <needle> [config.json]
+# expect_error <label> <units.json> <needle> [config.json [plan.json]]
 # Exit 1, the needle on a "units: " line, and nothing but "units: " lines.
 expect_error() {
-  local label=$1 units=$2 needle=$3 config=${4:-$fixtures/config.json} status=0
-  bash "$script" "$units" "$config" "$fixtures/plan.json" >/dev/null 2>"$work/stderr" || status=$?
+  local label=$1 units=$2 needle=$3 config=${4:-$fixtures/config.json} plan=${5:-$fixtures/plan.json} status=0
+  bash "$script" "$units" "$config" "$plan" >/dev/null 2>"$work/stderr" || status=$?
   if [ "$status" = 1 ] && grep -qF "units: $needle" "$work/stderr" && ! grep -v '^units: ' "$work/stderr" | grep -q .; then
     pass "$label"
   else
@@ -45,10 +45,20 @@ mutate() {
   printf '%s' "$work/$1.json"
 }
 
+# mutate_routing <name> <jq filter> → path of good-routing.json with the filter applied
+mutate_routing() {
+  jq "$2" "$fixtures/good-routing.json" >"$work/$1.json" || echo "<jq failed for $1>" >"$work/$1.json"
+  printf '%s' "$work/$1.json"
+}
+
 # The plan fixture must stay what validate-plan.sh prints for the good plan.
 plan_now=$(bash "$plugin_dir/scripts/validate-plan.sh" "$tests_dir/fixtures/plans/good.md" | jq -S .) || plan_now="<validate-plan failed>"
 if [ "$plan_now" = "$(jq -S . "$fixtures/plan.json")" ]; then pass "plan fixture matches validate-plan.sh"
 else fail "plan fixture matches validate-plan.sh" "regenerate tests/fixtures/units/plan.json"; fi
+
+plan_routing_now=$(bash "$plugin_dir/scripts/validate-plan.sh" "$tests_dir/fixtures/plans/routing.md" | jq -S .) || plan_routing_now="<validate-plan failed>"
+if [ "$plan_routing_now" = "$(jq -S . "$fixtures/plan-routing.json")" ]; then pass "routing plan fixture matches validate-plan.sh"
+else fail "routing plan fixture matches validate-plan.sh" "regenerate tests/fixtures/units/plan-routing.json"; fi
 
 expect_ok    "good contracts"           "$fixtures/good.json"
 expect_ok    "criteria in any order"    "$(mutate reordered '.units[1].contract.criteria |= reverse')"
@@ -85,6 +95,16 @@ expect_error "config min honoured"      "$fixtures/good.json" "U1 has 3 personas
 
 printf '[]' >"$work/config-array.json"
 expect_error "config not normalized"    "$fixtures/good.json" "config has no limits.qa_personas min and max; pass read-config.sh output" "$work/config-array.json"
+
+routing_plan="$fixtures/plan-routing.json"
+expect_ok    "routed unit uses its own persona range" "$fixtures/good-routing.json" "$fixtures/config.json" "$routing_plan"
+expect_ok    "unrouted unit in a routed plan keeps config range" "$(mutate_routing three '.units[1].contract.personas |= .[0:3]')" "$fixtures/config.json" "$routing_plan"
+expect_error "routed unit below its range" "$(mutate_routing few '.units[0].contract.personas |= .[0:3]')" "U1 has 3 personas; its routing allows 4 to 5" "$fixtures/config.json" "$routing_plan"
+expect_error "routed unit above its range" "$(mutate_routing many '.units[0].contract.personas += [range(2) | {name: "p\(.)", goals: "g", behaviour: "b"}]')" "U1 has 6 personas; its routing allows 4 to 5" "$fixtures/config.json" "$routing_plan"
+expect_error "unrouted unit still uses config range" "$(mutate_routing few-unrouted '.units[1].contract.personas |= .[0:2]')" "U2 has 2 personas; limits.qa_personas allows 3 to 5" "$fixtures/config.json" "$routing_plan"
+expect_error "routing changed from plan"   "$(mutate_routing drift '.units[0].routing.workers = "haiku"')" "U1 routing differs from the plan" "$fixtures/config.json" "$routing_plan"
+expect_error "routing dropped from unit"   "$(mutate_routing dropped 'del(.units[0].routing)')" "U1 routing differs from the plan" "$fixtures/config.json" "$routing_plan"
+expect_error "routing added to unrouted plan unit" "$(mutate 'added' '.units[0].routing = {workers: "best"}')" "U1 routing differs from the plan"
 
 # Every problem is reported, not just the first.
 two=$(mutate two '.units[0].contract.personas |= .[0:1] | .units[1].contract.criteria[0].check.how = ""')

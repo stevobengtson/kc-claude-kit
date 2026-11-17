@@ -16,6 +16,7 @@ One paragraph: what changes for whom, and why.
 ### U1: <title>
 - Depends on: none
 - Covers: AC1, AC2
+- Routing: workers=best; personas=4-5; security=staff
 <Scope: what this unit changes, in a few sentences. Each unit becomes one PR.>
 
 ### U2: <title>
@@ -34,4 +35,5 @@ Rules:
 - Units are `### U<n>: <title>`, numbered from 1 in order.
 - `Depends on:` is `none` or earlier units only (`U1, U2`). Dependent units become stacked PRs. Stacks are linear, so with several dependencies one of them must depend (directly or through others) on all the rest; the unit stacks on that one.
 - `Covers:` lists criteria; every criterion is covered by at least one unit.
+- `Routing:` is optional; leave it out and the unit runs with the defaults. Keys, in any order, each optional: `workers=<model>` (`haiku`, `sonnet`, `opus`, `best`, or a full `claude-*` model id), `personas=<min>-<max>` (QA persona count, `1 <= min <= max`) and `security=<workers|staff>` (which model runs the security lens).
 - `## Goal`, `## Acceptance criteria`, `## Work units` and `## Out of scope` are required.

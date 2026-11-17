@@ -56,10 +56,11 @@ function defaultAnswer(prompt, { agentType, label }) {
 const criterion = id => ({ id, statement: `${id} holds.`, check: { kind: 'test', how: 'bun test' } })
 const persona = name => ({ name, goals: 'g', behaviour: 'b' })
 
-function unit(id, index, dependsOn = [], contract = {}) {
+function unit(id, index, dependsOn = [], contract = {}, routing) {
   return {
     id, index, title: `Unit ${id}`, scope: 'scope', depends_on: dependsOn,
     contract: { criteria: [criterion('AC1')], personas: [persona('newbie')], branch: `ABC-1-unit-${id}`, pr_title: `ABC-1 Unit ${id}`, ...contract },
+    routing,
   }
 }
 
@@ -99,6 +100,51 @@ async function simulate({ units = [unit('U1', 0)], limits = {}, answer = () => u
 }
 
 const tests = {
+  'a routed unit runs its workers on its own model': async () => {
+    const { byId, calls } = await simulate({ units: [unit('U1', 0, [], {}, { workers: 'opus' })] })
+    assert.equal(byId.U1.status, 'done')
+    for (const type of ['engineer', 'ops', 'lens-reviewer', 'qa-persona', 'verifier', 'shipper', 'review-prep']) {
+      const ofType = calls.filter(c => c.agentType === `kc-autopilot:${type}`)
+      assert.ok(ofType.length, `no ${type} call`)
+      assert.ok(ofType.every(c => c.model === 'opus'), `${type} not on opus`)
+    }
+    const gates = calls.filter(c => c.agentType.startsWith('kc-gates:'))
+    assert.ok(gates.length && gates.every(c => c.model === 'opus'), 'kc-gates gates not on opus')
+  },
+
+  'a routed unit runs its skeptics and triage on its own model': async () => {
+    const { calls } = await simulate({
+      units: [unit('U1', 0, [], {}, { workers: 'opus' })],
+      answer: firstCalls(hasLabel('lens data r1'), { findings: [{ location: 'b.ts:2', scenario: 's', consequence: 'c', severity: 'major' }] }),
+    })
+    for (const type of ['skeptic', 'triage']) {
+      const ofType = calls.filter(c => c.agentType === `kc-autopilot:${type}`)
+      assert.ok(ofType.length, `no ${type} call`)
+      assert.ok(ofType.every(c => c.model === 'opus'), `${type} not on opus`)
+    }
+  },
+
+  'security=staff runs only the security lens on the staff model': async () => {
+    const { calls } = await simulate({ units: [unit('U1', 0, [], {}, { security: 'staff' })] })
+    assert.equal(labelled(calls, 'U1 lens security r1')[0].model, 'best')
+    assert.equal(labelled(calls, 'U1 lens data r1')[0].model, 'sonnet')
+  },
+
+  'a routed persona minimum applies': async () => {
+    const { byId } = await simulate({ units: [unit('U1', 0, [], {}, { personas: { min: 2, max: 3 } })] })
+    assert.equal(byId.U1.status, 'failed')
+    assert.equal(byId.U1.reason, 'contract has 1 personas; qa_personas.min is 2 (routing)')
+  },
+
+  'a routed persona minimum also holds for the personas that report': async () => {
+    const { byId } = await simulate({
+      units: [unit('U1', 0, [], { personas: [persona('newbie'), persona('expert')] }, { personas: { min: 2, max: 3 } })],
+      answer: firstCalls(hasLabel('qa expert'), { bugs: [], covered: ['AC1'], not_covered: [], ran: [] }),
+    })
+    assert.equal(byId.U1.status, 'failed')
+    assert.equal(byId.U1.reason, 'only 1 personas reported')
+  },
+
   'happy path ships with zero rounds': async () => {
     const { byId } = await simulate()
     assert.equal(byId.U1.status, 'done')

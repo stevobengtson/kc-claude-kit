@@ -55,6 +55,14 @@ expect_error "independent deps"   multi-dep-independent.md 'U3 depends on indepe
 expect_error "missing title"      bad-shape.md 'missing title: a "# <Plan title>" line'
 expect_error "unnumbered criteria" bad-shape.md '## Acceptance criteria has no numbered criteria'
 expect_error "no units"           bad-shape.md '## Work units has no ### U<n>: units'
+expect_value "routing parsed"     routing.md '.units[0].routing' '{"workers":"best","personas":{"min":4,"max":5},"security":"staff"}'
+expect_value "routing partial"    routing.md '.units[1].routing' '{"workers":"sonnet"}'
+expect_value "no routing no key"  good.md    '.units[0] | has("routing")' 'false'
+expect_value "security=workers is accepted, trailing ; ignored" routing-edge.md '.units[0].routing' '{"security":"workers"}'
+expect_error "unknown routing key" routing-bad.md 'U1 routing has unknown key colour'
+expect_error "bad persona range"  routing-bad.md 'U2 routing personas must be <min>-<max> with 1 <= min <= max'
+expect_error "bad model"          routing-bad.md 'U3 routing workers must be haiku, sonnet, opus, best or a claude-* model id'
+expect_error "bad security"       routing-bad.md 'U4 routing security must be workers or staff'
 expect_error "missing file"       missing.md   "$plans/missing.md not found"
 
 echo "validate-plan: $passes passed, $failures failed"
