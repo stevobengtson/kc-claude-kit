@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed (eval runs can write files)
 
-- `scripts/run-changed-evals.sh` grants Write to eval runs: an agent's Write tool is gated by `claude plugin eval`, so a case whose agent must write a file failed without it. The class: a tool an agent needs that the harness holds back unless asked; other cases are a CI job that lacks a token its step reads, a sandbox that blocks a path a test writes. Held by `scripts/tests/run-changed-evals.test.sh`. No plugin changed for this line.
+- `scripts/run-changed-evals.sh` grants each eval run the gated tools (Bash, Agent, Write) its case's `allowed_tools` names, all three when it names none: an agent's Write tool is gated by `claude plugin eval`, so a case whose agent must write a file failed without it, and a Bash grant the case never uses made the run refuse on a machine with no sandbox to confine it. The class: a tool an agent needs that the harness holds back unless asked; other cases are a CI job that lacks a token its step reads, a sandbox that blocks a path a test writes. Held by `scripts/tests/run-changed-evals.test.sh`. No plugin changed for this line.
 
 ### Changed (a unit's objection no longer stops the rest)
 

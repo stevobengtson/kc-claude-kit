@@ -408,6 +408,29 @@ expect_calls "one eval run for a guard" 1
 expect_output "it says what a guard proves" "a guard case"
 reset_tree
 
+# A run is granted only the gated tools (Bash, Agent, Write) its case allows: a shell the case
+# never uses makes the eval refuse to run on a machine with no sandbox to confine it.
+create_branch narrow-tools
+write_repo_file plugins/shop/evals/totals/prompt.md '---\nplugins: ["../.."]\nallowed_tools: [Read, Grep, Agent, Write]\n---\nReview it.\n'
+commit_change "a case that needs no shell"
+write_result totals true false
+run_script
+if grep -qE -- '--allow-tools Agent Write$' "$calls" && ! grep -q 'Bash' "$calls"; then
+  pass "a case that allows no shell is granted only Agent and Write"
+else
+  fail "a case that allows no shell is granted only Agent and Write (got: $(cat "$calls"))"
+fi
+reset_tree
+write_repo_file plugins/shop/evals/totals/prompt.md '---\nplugins: ["../.."]\nallowed_tools: [Read, Grep]\n---\nReview it.\n'
+commit_change "a case that needs no gated tool"
+run_script
+if grep -q 'plugin eval' "$calls" && ! grep -q -- '--allow-tools' "$calls"; then
+  pass "a case that allows no gated tool is granted none"
+else
+  fail "a case that allows no gated tool is granted none (got: $(cat "$calls"))"
+fi
+reset_tree
+
 status=0
 (cd "$repo" && bash "$script" >/dev/null 2>&1) || status=$?
 if [ "$status" -eq 2 ]; then pass "no arguments exit 2"; else fail "no arguments exit 2 (exit $status)"; fi
