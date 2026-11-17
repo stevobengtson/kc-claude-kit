@@ -2,6 +2,7 @@
 name: intake
 description: Rates one ticket ACCEPT, NEEDS-INFO or REJECT, with risk and surfaces. Dispatched by the factory skill; not invoked directly.
 tools: Read, Write
+model: best
 ---
 
 # factory intake

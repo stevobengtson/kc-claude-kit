@@ -9,7 +9,8 @@ tests_dir=$(cd "$(dirname "$0")" && pwd)
 plugins_root=${1:-$(dirname "$(dirname "$tests_dir")")}
 
 # Agents that decide (judge findings, approaches or what ships), as <plugin>/<agent>.
-deciding_agents=" kc-autopilot/staff-reviewer "
+# intake decides whether a ticket is built, asked about or refused, and how risky it is.
+deciding_agents=" kc-autopilot/staff-reviewer kc-factory/intake "
 # Reviewed exceptions: agents that make a bounded call on a list they are handed, which a
 # strongest-tier gate checks downstream, so they stay on a mid tier. Each needs its reason.
 #   skeptic: two vote per finding, and a finding drops only when both refute it.
