@@ -1,5 +1,21 @@
 {
   "modules": [
     "./register.tsx"
-  ]
+  ],
+  "description": "Guards the factory's intake agent: it writes only its job's intake.md, reads only inside the repo and no secret-looking path, and uses no other tool",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-intake.sh\"",
+            "shell": "bash",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
 }
