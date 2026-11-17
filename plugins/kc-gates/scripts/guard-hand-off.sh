@@ -25,12 +25,22 @@
 # literal KC_READY_SKIP=1 passes: the skill adds it only when the user has
 # said to skip the pass for that PR.
 #
+# When the repo has .claude/hand-off-checklist.md at that commit, the commit
+# also needs checklist verdicts (ready-receipt.sh write <sha> --verdicts
+# <graded checklist>) with every box PASS, or N/A with a reason; a missing or
+# FAIL box blocks, named one line each. A commit this clone doesn't have, with
+# no verdicts recorded, can't be read and is not blocked on its checklist.
+#
 # `drafts: true` in a hand-off checklist's front matter is no longer needed
 # and is ignored: a pass receipt always precedes the PR.
 #
 # Commands are read word by word, so a PR is named the way gh documents it,
 # right after the subcommand (`gh pr edit 12 --add-reviewer ana`); with no
 # number there, gh's own default, the current branch's PR, is checked.
+#
+# Before any such push (a branch the remote has or doesn't), the repo's lint runs on the files the
+# push adds (lint-changed-files.sh: `.claude/lint-command`, else `npx biome check` when biome.json
+# is at the repo root, else nothing) and a failure blocks the push with the lint output.
 #
 # Output: the PreToolUse deny JSON on a blocked command, nothing otherwise.
 # Always exits 0. Hook schema: https://code.claude.com/docs/en/hooks
@@ -154,12 +164,42 @@ print_deny() {
   print_deny_reason "$1 Run /kc-gates:kc-ready-for-review on the committed branch before its first push: one pass of review and QA, ending in a receipt for the commit the PR will show."
 }
 
+# Denies when the commit's hand-off checklist has unmet boxes (see the header).
+# $1 is the commit, $2 the directory it is read in. Prints the deny JSON and
+# returns 1 when it blocks.
+check_checklist() {
+  local sha=$1 dir=$2 unmet root lines
+  root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || root=""
+  if unmet=$(bash "$scripts_dir/ready-receipt.sh" check "$sha" --checklist ${root:+--repo "$root"} 2>/dev/null); then
+    return 0
+  fi
+  lines=$(printf '%s' "$unmet" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{ printf "%s%s", (NR > 1 ? "\\n" : ""), "- " $0 }')
+  print_deny_reason "commit $sha has a review receipt but its hand-off checklist is not met:\\n$lines\\nGrade every box PASS, or N/A: reason (copy the box lines, replacing [ ] with [PASS], [FAIL] or [N/A: reason]), fix a FAIL, then record it: bash $scripts_dir/ready-receipt.sh write $sha --verdicts <graded-checklist-file>."
+  return 1
+}
+
 # The words after `git` when the segment starts with it (after any VAR=value
 # prefixes), quotes dropped; empty otherwise.
 git_words() {
   printf '%s' "$1" \
     | tr -d "\"'" \
     | sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*git[[:space:]]+(.*)$/\2/p'
+}
+
+# Denies a push whose changed files fail the repo's lint (lint-changed-files.sh). The push base is
+# the remote's copy of the branch, else the merge-base with the remote's default branch; with
+# neither known locally nothing is linted. Prints the deny JSON and returns 1 when it blocks.
+check_lint() {
+  local dir=$1 remote=$2 dst=$3 default=$4 sha=$5 base="" lint_output escaped
+  for ref in "refs/remotes/$remote/$dst" "refs/remotes/$remote/$default"; do
+    base=$(git -C "$dir" merge-base "$ref" "$sha" 2>/dev/null) && break
+    base=""
+  done
+  [ -n "$base" ] || return 0
+  lint_output=$(bash "$scripts_dir/lint-changed-files.sh" "$dir" "$base" "$sha") && return 0
+  escaped=$(printf '%s\n' "$lint_output" | head -n 40 | LC_ALL=C tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/ /g' | awk '{ printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }')
+  print_deny_reason "the lint fails on the files this push adds (the repo's .claude/lint-command, or biome check). Fix it before pushing:\\n$escaped"
+  return 1
 }
 
 # Denies a `git push` that publishes a branch the remote doesn't have yet, from
@@ -232,6 +272,7 @@ check_push() {
       || sha=$(git -C "$dir" rev-parse -q --verify HEAD 2>/dev/null) || continue
     status=0
     GIT_TERMINAL_PROMPT=0 git -C "$dir" ls-remote --exit-code --heads "$remote" "refs/heads/$dst" >/dev/null 2>&1 || status=$?
+    check_lint "$dir" "$remote" "$dst" "${default:-main}" "$sha" || return 1
     case "$status" in
       0) continue ;;
       2) ;;
@@ -244,6 +285,7 @@ check_push() {
       print_deny_reason "this is the first push of branch '$dst', and its commit $sha has no kc-ready-for-review receipt. Run /kc-gates:kc-ready-for-review on the committed branch before its first push (and before the PR): one pass of review and QA, ending in a receipt for that commit."
       return 1
     fi
+    check_checklist "$sha" "$dir" || return 1
   done
   return 0
 }
@@ -293,6 +335,7 @@ main() {
       print_deny "this command opens or hands over a PR, and its head commit $head has no kc-ready-for-review receipt."
       exit 0
     fi
+    check_checklist "$head" "$dir" || exit 0
   done <<EOF
 $(split_segments "$command")
 EOF

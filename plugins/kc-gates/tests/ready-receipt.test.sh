@@ -14,6 +14,10 @@ tests_dir=$(cd "$(dirname "$0")" && pwd)
 . "$tests_dir/lib/harness.sh"
 scripts="$(dirname "$tests_dir")/scripts"
 export KC_READY_DIR="$work_dir/receipts"
+# A stub gh with no PR for the branch, so a receipt write never reaches the network; the unanswered-comment
+# cases below point KC_GH_ROUTES at a PR with comments.
+gh_fixtures="$tests_dir/fixtures/unanswered-pr-comments"
+use_gh_fixtures "$gh_fixtures/none"
 
 # A 40-character commit id made of <char>, for a commit no clone has.
 make_fake_sha() { printf '%040d' 0 | tr 0 "$1"; }
@@ -129,7 +133,21 @@ written_pass_head=$fixed_head
 rm "$pass_dir/fixes.txt"
 expect_write written "a pass that found nothing needs no fixes record" "$round_one" --rounds 1 --open 0 --size small --pass "$pass_dir"
 expect_contains "the receipt records the pass's size" "size=small" "$(bash "$scripts/ready-receipt.sh" check "$round_one")"
-expect_eq "it prints only the receipt line" "receipt written: $KC_READY_DIR/$round_one" "$last_output"
+expect_eq "it prints only the receipt line (and the note that PR comments were not checked)" "receipt written: $KC_READY_DIR/$round_one" "$(printf '%s\n' "$last_output" | grep -v '^unanswered-pr-comments:')"
+
+# A PR comment its author has not answered refuses the receipt, for a pass and for --after.
+rm -f "$KC_READY_DIR/$round_one"
+export KC_GH_ROUTES="$gh_fixtures/unanswered/routes.tsv"
+expect_write refused "a pass is refused while the PR has an unanswered comment" "$round_one" --rounds 1 --open 0 --size small --pass "$pass_dir"
+expect_said "it names the inline comment by path:line and author" "src/total.ts:12 @review-bot[bot]"
+expect_said "it names the top-level comment" "top-level @coverage-bot[bot]"
+expect_eq "no receipt is written" absent "$([ -e "$KC_READY_DIR/$round_one" ] && echo present || echo absent)"
+export KC_GH_ROUTES="$gh_fixtures/answered/routes.tsv"
+expect_write written "the same pass is written once the author has replied to every comment" "$round_one" --rounds 1 --open 0 --size small --pass "$pass_dir"
+export KC_GH_ROUTES="$gh_fixtures/unanswered/routes.tsv"
+expect_write refused "an --after write is refused while the PR has an unanswered comment" "$fixed_head" --after "$round_one"
+expect_said "it names the unanswered comment" "src/total.ts:12 @review-bot[bot]"
+export KC_GH_ROUTES="$gh_fixtures/none/routes.tsv"
 
 # One gate round (§H1): a second is refused. The fixes are held by their record: a fix names a
 # test its commits changed (§H4), and what is left open says why and numbers --open (§H3).
@@ -496,5 +514,91 @@ fi
 usage_text=$(bash "$scripts/ready-receipt.sh" 2>&1 || true)
 expect_contains "no arguments print the usage" "ready-receipt.sh write <sha> --rounds 1 --open <n> --pass <dir>" "$usage_text"
 expect_eq "the usage has the header's lines without their comment marks" 0 "$(printf '%s\n' "$usage_text" | grep -c '^#' || true)"
+
+# Checklist verdicts (§H7): the hand-off checklist's boxes each get PASS, or N/A with a reason; a
+# box with no line, FAIL, or N/A with no reason is unmet, and is named.
+build_repo
+mkdir -p "$repo/.claude"
+printf -- '# Hand-off checklist\n\n- [ ] The shop total is documented in the README for readers.\n- [ ] Screenshots are attached to the description.\n' > "$repo/.claude/hand-off-checklist.md"
+with_checklist=$(commit_all "add the checklist")
+graded="$work_dir/graded.md"
+verdict_check() {
+  verdict_status=0
+  verdict_output=$(bash "$scripts/ready-receipt.sh" check "$1" --checklist --repo "$repo" 2>&1) || verdict_status=$?
+}
+record_verdicts() {
+  (cd "$repo" && bash "$scripts/ready-receipt.sh" write "$with_checklist" --verdicts "$graded" "$@" >/dev/null 2>&1)
+}
+verdict_check "$with_checklist"
+expect_eq "no verdicts recorded: the checklist is unmet" 1 "$verdict_status"
+expect_contains "it counts the boxes" "no verdicts recorded for the 2 boxes" "$verdict_output"
+verdict_check "$base"
+expect_eq "a commit whose repo has no checklist file needs no verdicts" 0 "$verdict_status"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [N/A: no screen changed] Screenshots are attached to the description.\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "every box PASS or N/A with a reason is met" 0 "$verdict_status"
+expect_eq "the receipt itself is untouched by verdicts alone" no "$(bash "$scripts/ready-receipt.sh" check "$with_checklist" >/dev/null 2>&1 && echo yes || echo no)"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [FAIL] Screenshots are attached to the description.\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "a FAIL box is unmet" 1 "$verdict_status"
+expect_eq "it names the box, one line" "FAIL: Screenshots are attached to the description." "$verdict_output"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "a box with no line is unmet" "no verdict: Screenshots are attached to the description." "$verdict_output"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [N/A] Screenshots are attached to the description.\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "N/A with no reason is unmet" "N/A without a reason: Screenshots are attached to the description." "$verdict_output"
+printf -- '- [PASS] The shop total is documented in the READ\n- [PASS] Screenshots are attached to the desc\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "a box named by its first 20+ characters counts" 0 "$verdict_status"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [PASS] Screenshots\n' > "$graded"
+record_verdicts
+verdict_check "$with_checklist"
+expect_eq "a box named by fewer than 20 characters does not count" 1 "$verdict_status"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [PASS] Screenshots are attached to the description.\n' > "$graded"
+record_verdicts --task ABC-1
+printf -- '\n- [ ] A new box.\n' >> "$repo/.claude/hand-off-checklist.md"
+changed_checklist=$(commit_all "a new box")
+verdict_check "$changed_checklist"
+expect_contains "a changed checklist has no verdicts yet" "no verdicts recorded for the 3 boxes" "$verdict_output"
+verdict_check "$with_checklist"
+expect_eq "verdicts stay with the commit they graded" 0 "$verdict_status"
+# --task: found by key, with no repo.
+expect_eq "check-task finds the verdicts by key" 0 "$(bash "$scripts/ready-receipt.sh" check-task ABC-1 >/dev/null 2>&1; echo $?)"
+expect_contains "check-task with no verdicts for the key says so" "no checklist receipt names ABC-2" "$(bash "$scripts/ready-receipt.sh" check-task ABC-2 2>&1 || true)"
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [FAIL] Screenshots are attached to the description.\n' > "$graded"
+record_verdicts --task ABC-3
+expect_contains "check-task names an unmet box" "FAIL: Screenshots are attached" "$(bash "$scripts/ready-receipt.sh" check-task ABC-3 2>&1 || true)"
+# The newest verdicts for a key count: a re-recorded walk replaces an older one.
+printf 'task=ABC-9\nbox\tFAIL\told box\n' > "$KC_READY_DIR/aaaa.checklist"
+touch -t 202001010000 "$KC_READY_DIR/aaaa.checklist"
+printf 'task=ABC-9\nbox\tPASS\tnew box\n' > "$KC_READY_DIR/zzzz.checklist"
+expect_eq "check-task reads the newest verdicts for the key" 0 "$(bash "$scripts/ready-receipt.sh" check-task ABC-9 >/dev/null 2>&1; echo $?)"
+rm "$KC_READY_DIR/aaaa.checklist" "$KC_READY_DIR/zzzz.checklist"
+# --after copies a pass's verdicts when the checklist is unchanged, and not when it changed.
+printf -- '- [PASS] The shop total is documented in the README for readers.\n- [PASS] Screenshots are attached to the description.\n- [PASS] A new box.\n' > "$graded"
+(cd "$repo" && bash "$scripts/ready-receipt.sh" write "$changed_checklist" --verdicts "$graded" >/dev/null 2>&1)
+printf 'rounds=1\n' > "$KC_READY_DIR/$changed_checklist"
+printf 'echo fix\n' >> "$repo/shop/total.sh"
+fix_head=$(commit_all "fix")
+expect_write written "--after on a fix commit" "$fix_head" --after "$changed_checklist"
+verdict_check "$fix_head"
+expect_eq "--after copies the pass's verdicts when the checklist is unchanged" 0 "$verdict_status"
+printf '%s\n' "- [ ] changed again" >> "$repo/.claude/hand-off-checklist.md"
+fix4_head=$(commit_all "the checklist changed in a fix")
+expect_write written "--after when the checklist changed since the pass" "$fix4_head" --after "$changed_checklist"
+verdict_check "$fix4_head"
+expect_eq "--after copies nothing when the checklist changed since the pass" 1 "$verdict_status"
+# --checklist with --verdicts writes both.
+expect_write written "--checklist with --verdicts" "$with_checklist" --checklist --verdicts "$graded"
+expect_contains "the receipt records the walk" "checklist=walked" "$(bash "$scripts/ready-receipt.sh" check "$with_checklist")"
+verdict_check "$with_checklist"
+expect_eq "and the verdicts" 0 "$verdict_status"
+expect_write refused "a graded file that does not exist is refused" "$with_checklist" --verdicts "$work_dir/nope.md"
 
 finish
