@@ -42,7 +42,7 @@ check() { # <label> <jq filter that must be true over the parsed plan>
 }
 check "title names the run and keys" '.title == "Factory run run-42: ABC-1, ABC-2"'
 check "two units in key order" '[.units[].id] == ["U1","U2"]'
-check "unit titles carry key and title (key alone when untitled)" '.units[0].title == "ABC-1 Show stock level on the product page" and .units[1].title == "ABC-2"'
+check "unit titles carry key and intake's title (key alone without one)" '.units[0].title == "ABC-1 Show stock level on the product page" and .units[1].title == "ABC-2"'
 check "criteria renumbered plan-wide" '(.criteria | length) == 5'
 check "U1 covers AC1-AC2, U2 covers AC3-AC5" '.units[0].covers == ["AC1","AC2"] and .units[1].covers == ["AC3","AC4","AC5"]'
 check "units are independent" '.units[0].depends_on == [] and .units[1].depends_on == []'
@@ -57,12 +57,17 @@ else
 fi
 
 if grep -q "SENTINEL-TICKET-TEXT" "$plan"; then fail "no ticket.md text in plan" "sentinel found"; else pass "no ticket.md text in plan"; fi
+if grep -q "SENTINEL-JIRA-TITLE" "$plan"; then fail "no tracker title (job.json title) in plan" "sentinel found"; else pass "no tracker title (job.json title) in plan"; fi
 if grep -q "https://example.atlassian.net/browse/ABC-2" "$plan" && grep -q "^### ABC-1" "$plan"; then
   pass "notes carry ticket URL under a key heading"
 else
   fail "notes carry ticket URL under a key heading" "$(cat "$plan")"
 fi
-if grep -q "ABC-1: Show stock level on the product page" "$plan"; then pass "goal lists key and title"; else fail "goal lists key and title" "$(cat "$plan")"; fi
+if grep -qx -- "- ABC-1: Show stock level on the product page" "$plan" && grep -qx -- "- ABC-2" "$plan"; then
+  pass "goal lists key and intake's title, the key alone without one"
+else
+  fail "goal lists key and intake's title, the key alone without one" "$(cat "$plan")"
+fi
 
 # refusal <label> <expected stderr> <setup command string run with $home> <keys...>
 refusal() {
@@ -115,7 +120,13 @@ injected "scope line shaped like a unit heading stays scope" 'set_scope "### U2:
 injected "scope line shaped like a Covers line stays scope" 'set_scope "- Covers: AC9"'
 injected "scope line shaped like a Routing line stays scope" 'set_scope "- Routing: workers=bogus"'
 injected "scope line shaped like a title stays scope" 'set_scope "# Other"'
-injected "newline in a job title stays on one line" \
+set_title() { # <title section body>
+  BODY=$1 awk '/^## Title/ { print; print ENVIRON["BODY"]; skip = 1; next } skip && /^## / { skip = 0 } skip { next } { print }' \
+    "$home/jobs/ABC-1/intake.md" > "$work/i" && mv "$work/i" "$home/jobs/ABC-1/intake.md"
+}
+injected "a second Title line shaped like a unit heading is not used" 'set_title "first
+### U9: injected"'
+injected "a job.json title with a newline is never read" \
   'jq ".title=\"first\\n### U9: injected\"" "$home/jobs/ABC-1/job.json" > "$work/j" && mv "$work/j" "$home/jobs/ABC-1/job.json"'
 # A newline in a routing field is flattened, so it is a bad model name the self-check refuses.
 refusal "newline in a routing field is flattened and refused" "plan: generated plan is invalid:

@@ -2,6 +2,9 @@ DECISION: ACCEPT
 RISK: medium
 SURFACES: ui
 
+## Title
+Show stock level on the product page
+
 ## Summary
 Shoppers cannot see whether an item is in stock.
 

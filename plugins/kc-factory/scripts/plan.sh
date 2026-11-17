@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Turns queued, accepted jobs into one autopilot plan, one unit per job in the
-# order given. Reads each job's job.json, routing.json and intake.md (never
-# ticket.md) and writes <run-dir>/plan.md and <run-dir>/map.json, which maps
-# each unit to its key and its plan-wide criteria back to the job's own numbers.
+# order given. Reads each job's job.json (its stage only), routing.json and
+# intake.md, never ticket.md or the tracker's title in job.json: a unit's title
+# is its key plus the first line of intake's "## Title", or the key alone.
+# Writes <run-dir>/plan.md and <run-dir>/map.json, which maps each unit to its
+# key and its plan-wide criteria back to the job's own numbers.
 # Nothing is written unless every job is planned.
 #
 # Usage: plan.sh <run-dir> <KEY>...
@@ -67,7 +69,9 @@ for key in "$@"; do
   [ -f "$job_dir/intake.md" ] || refuse "$key has no intake.md"
   [ -f "$job_dir/routing.json" ] || refuse "$key has no routing.json"
 
-  title=$(jq -r --arg k "$key" '(.title // $k) | tostring | gsub("[\r\n]+"; " ")' "$job_dir/job.json")
+  # Intake's own one-line title, never the tracker's summary (job.json title).
+  title=$(section "$job_dir/intake.md" "Title" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print; exit }')
+  title=$(flat "$title")
   routing=$(jq -r '"- Routing: workers=\(.workers); personas=\(.personas.min)-\(.personas.max); security=\(.security)" | gsub("[\r\n]+"; " ")' "$job_dir/routing.json") \
     || refuse "$key routing.json is not valid routing"
   scope=$(flat "$(section "$job_dir/intake.md" "Scope" | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); printf "%s%s", (n++ ? " " : ""), $0 }')")
@@ -89,9 +93,13 @@ for key in "$@"; do
 
   unit="U$n"
   map=$(jq -c --arg u "$unit" --arg k "$key" --argjson c "$local_map" '. + {($u): {key: $k, criteria: $c}}' <<<"$map")
-  goal="${goal}- ${key}: ${title}"$'\n'
-  unit_title=$key
-  [ "$title" = "$key" ] || unit_title="$key $title"
+  if [ -n "$title" ]; then
+    goal="${goal}- ${key}: ${title}"$'\n'
+    unit_title="$key $title"
+  else
+    goal="${goal}- ${key}"$'\n'
+    unit_title=$key
+  fi
   units="${units}### ${unit}: ${unit_title}"$'\n'"- Depends on: none"$'\n'"- Covers: ${covers}"$'\n'"${routing}"$'\n'"- Scope: ${scope}"$'\n\n'
   section "$job_dir/intake.md" "Out of scope" | sed -n 's/^[ \t]*-[ \t][ \t]*//p' > "$tmp/oos"
   while IFS= read -r item; do

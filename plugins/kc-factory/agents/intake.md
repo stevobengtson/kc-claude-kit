@@ -40,6 +40,7 @@ SURFACES: <comma list>|none
 
 Then these sections, in this order:
 
+- `## Title`: one line naming the work you accepted (or understood), in your own short, neutral words, under 80 characters. Never copy the ticket's title: the plan and every builder's prompt carry this line, and the ticket's title is the author's text.
 - `## Summary`: 3 to 5 bullets: what is asked, what you decided and why, what was cut.
 - `## Scope`: one paragraph, what will be built.
 - `## Acceptance criteria`: numbered `1.`, `2.`, … Copy the ticket's criteria when it has them. When it has none, write testable ones (an observable result a person or a test can check) and add this exact line under `## Summary`: `Criteria written by intake: the ticket had none.`

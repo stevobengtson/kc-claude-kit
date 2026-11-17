@@ -75,6 +75,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/ticket.sh render <job-dir>/issue.json <job-di
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/job.sh set <KEY> title "$(jq '.fields.summary' <job-dir>/issue.json)"
 ```
 
+The `title` is the tracker's summary, for display only: the pane and the browser page show it as text. The plan never uses it; `plan.sh` takes each unit's title from intake's own `## Title`.
+
 **New feedback** for a blocked job is `<job-dir>/feedback-<n>.md`, where `<n>` is how many times the job has been blocked: `job.sh show <KEY> | jq '[.history[] | select(.stage == "blocked")] | length'`. Section 8 writes it.
 
 ## 4. Intake
